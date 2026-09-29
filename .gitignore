@@ -8,3 +8,4 @@ htmlcov/
 db.sqlite3
 *.egg-info/
 .pytest_cache/
+.pytest_tmp/
