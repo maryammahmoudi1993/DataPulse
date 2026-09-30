@@ -17,18 +17,22 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'channels',
     'rest_framework',
     'streams',
     'ingestion',
     'detection',
     'sources',
     'api',
+    'alerts',
+    'realtime',
 ]
 
 MIDDLEWARE = [
@@ -125,3 +129,25 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 5.0,
     },
 }
+
+
+ASGI_APPLICATION = 'datapulse.asgi.application'
+
+CHANNEL_LAYER_BACKEND = env('CHANNEL_LAYER_BACKEND', default='redis')
+if CHANNEL_LAYER_BACKEND == 'memory':
+    CHANNEL_LAYERS = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'}}
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        },
+    }
+
+ALERT_DEDUP_WINDOW_MINUTES = env.int('ALERT_DEDUP_WINDOW_MINUTES', default=5)
+ALERT_WEBHOOK_TIMEOUT_SECONDS = env.int('ALERT_WEBHOOK_TIMEOUT_SECONDS', default=5)
+
+LSTM_MODEL_DIR = env('LSTM_MODEL_DIR', default=str(BASE_DIR / 'media' / 'lstm_models'))
+
+DEMO_WORKSPACE_SLUG = 'demo'
+DEMO_PUBLIC_ACCESS = env.bool('DEMO_PUBLIC_ACCESS', default=False)

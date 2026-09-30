@@ -2,9 +2,21 @@ from celery import shared_task
 
 from detection.factory import get_detector
 
+HISTORY_LIMIT = 200
+
 
 @shared_task
 def detect_and_alert(point_id):
+    """Run the stream's detector on a data point and raise an alert if needed.
+
+    Args:
+        point_id: Primary key of the DataPoint to evaluate.
+
+    Returns:
+        Dict with ``is_anomaly``, ``score`` and ``severity``, or None when
+        the point no longer exists.
+    """
+    from alerts.services import create_alert
     from ingestion.models import DataPoint
 
     try:
@@ -13,7 +25,7 @@ def detect_and_alert(point_id):
         return None
 
     stream = point.stream
-    history_qs = stream.data_points.exclude(pk=point.pk).order_by('-timestamp')[:200]
+    history_qs = stream.data_points.exclude(pk=point.pk).order_by('-timestamp', '-id')[:HISTORY_LIMIT]
     history = [dp.value for dp in reversed(list(history_qs))]
 
     detector = get_detector(stream)
@@ -28,6 +40,7 @@ def detect_and_alert(point_id):
             'severity': result.severity,
         }
         point.save(update_fields=['metadata'])
+        create_alert(stream, point, result)
 
     return {
         'is_anomaly': result.is_anomaly,
