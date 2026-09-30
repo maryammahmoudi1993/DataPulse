@@ -1,9 +1,13 @@
 from streams.models import Stream
 
+from detection.detectors.iqr import IQRDetector
+from detection.detectors.lstm import LSTMDetector
 from detection.detectors.zscore import ZScoreDetector
 
 _DETECTORS = {
     Stream.DETECTOR_ZSCORE: ZScoreDetector,
+    Stream.DETECTOR_IQR: IQRDetector,
+    Stream.DETECTOR_LSTM: LSTMDetector,
 }
 
 

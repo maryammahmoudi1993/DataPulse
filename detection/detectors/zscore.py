@@ -10,6 +10,7 @@ class ZScoreDetector(BaseDetector):
     def __init__(self, config=None):
         super().__init__(config)
         self.threshold = self.config.get('threshold', 3.0)
+        self.window = self.config.get('window', 60)
         self.min_history = self.config.get('min_history', 10)
         self.mean = None
         self.std = None
@@ -20,7 +21,7 @@ class ZScoreDetector(BaseDetector):
             self.std = None
             return
 
-        values = np.array(history, dtype=float)
+        values = np.array(list(history)[-self.window:], dtype=float)
         self.mean = float(np.mean(values))
         self.std = float(np.std(values))
 
