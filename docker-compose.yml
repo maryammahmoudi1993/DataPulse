@@ -43,10 +43,11 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8000), 2)"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   worker:
     <<: *django
