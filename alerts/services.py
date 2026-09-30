@@ -1,10 +1,13 @@
 import datetime
+import logging
 
 from django.conf import settings
 from django.utils import timezone
 
 from alerts.models import Alert
 from realtime.publisher import publish_stream_event
+
+logger = logging.getLogger(__name__)
 
 
 def create_alert(stream, point, result):
@@ -28,6 +31,7 @@ def create_alert(stream, point, result):
         created_at__gte=timezone.now() - window,
     )
     if recent.exists():
+        logger.info('Alert suppressed as duplicate', extra={'stream_id': stream.id, 'severity': result.severity})
         return None
 
     alert = Alert.objects.create(
@@ -39,6 +43,12 @@ def create_alert(stream, point, result):
         severity=result.severity,
         detector_type=stream.detector_type,
     )
+
+    logger.info('Alert created', extra={
+        'stream_id': stream.id,
+        'alert_id': alert.id,
+        'severity': alert.severity,
+    })
 
     publish_stream_event(stream.id, {
         'type': 'alert',

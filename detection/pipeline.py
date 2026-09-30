@@ -1,6 +1,10 @@
+import logging
+
 from celery import shared_task
 
 from detection.factory import get_detector
+
+logger = logging.getLogger(__name__)
 
 HISTORY_LIMIT = 200
 
@@ -31,6 +35,12 @@ def detect_and_alert(point_id):
     detector = get_detector(stream)
     detector.fit(history)
     result = detector.detect(point.value)
+
+    logger.info('Detection complete', extra={
+        'stream_id': stream.id,
+        'score': result.score,
+        'is_anomaly': result.is_anomaly,
+    })
 
     if result.is_anomaly:
         point.metadata = {
