@@ -9,3 +9,9 @@ db.sqlite3
 *.egg-info/
 .pytest_cache/
 .pytest_tmp/
+send_p3_report.py
+.env.docker.local
+frontend/node_modules/
+frontend/dist/
+staticfiles/
+media/

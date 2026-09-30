@@ -4,6 +4,7 @@ from django.utils import timezone
 from streams.models import Stream
 
 from detection.pipeline import detect_and_alert
+from realtime.publisher import publish_stream_event
 from ingestion.models import DataPoint
 from sources.factory import get_source_adapter
 
@@ -36,6 +37,13 @@ def poll_stream(stream_id):
         timestamp=timezone.now(),
         value=value,
     )
+
+    publish_stream_event(stream.id, {
+        'type': 'datapoint',
+        'id': point.id,
+        'value': point.value,
+        'timestamp': point.timestamp.isoformat(),
+    })
 
     detect_and_alert.delay(point.id)
 
