@@ -11,6 +11,11 @@ class Workspace(models.Model):
         null=True,
         blank=True,
     )
+    members = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name='member_workspaces',
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -18,6 +23,24 @@ class Workspace(models.Model):
 
     def __str__(self):
         return self.name
+
+    @classmethod
+    def accessible_to(cls, user):
+        """Return workspaces a user may see.
+
+        Args:
+            user: Django user, possibly anonymous.
+
+        Returns:
+            QuerySet of workspaces the user owns or belongs to. Anonymous
+            users only see the public demo workspace, and only when
+            ``DEMO_PUBLIC_ACCESS`` is enabled.
+        """
+        if user is not None and user.is_authenticated:
+            return cls.objects.filter(models.Q(owner=user) | models.Q(members=user)).distinct()
+        if getattr(settings, 'DEMO_PUBLIC_ACCESS', False):
+            return cls.objects.filter(slug=settings.DEMO_WORKSPACE_SLUG)
+        return cls.objects.none()
 
 
 class Stream(models.Model):
