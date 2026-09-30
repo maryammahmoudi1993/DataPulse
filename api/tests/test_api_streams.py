@@ -25,7 +25,7 @@ def api_client():
 def test_list_streams_requires_auth(api_client):
     response = api_client.get('/api/streams/')
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 @pytest.mark.django_db

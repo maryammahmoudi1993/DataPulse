@@ -47,7 +47,7 @@ def test_outsider_cannot_see_alerts(stream):
 
 
 def test_anonymous_demo_access_disabled_by_default(stream):
-    assert APIClient().get('/api/streams/').status_code == 403
+    assert APIClient().get('/api/streams/').status_code == 401
 
 
 def test_anonymous_demo_access_when_enabled(db, settings):

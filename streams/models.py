@@ -32,12 +32,14 @@ class Workspace(models.Model):
             user: Django user, possibly anonymous.
 
         Returns:
-            QuerySet of workspaces the user owns or belongs to. Anonymous
+            QuerySet of workspaces the user owns or is a member of. Anonymous
             users only see the public demo workspace, and only when
             ``DEMO_PUBLIC_ACCESS`` is enabled.
         """
         if user is not None and user.is_authenticated:
-            return cls.objects.filter(models.Q(owner=user) | models.Q(members=user)).distinct()
+            return cls.objects.filter(
+                models.Q(owner=user) | models.Q(members=user) | models.Q(memberships__user=user)
+            ).distinct()
         if getattr(settings, 'DEMO_PUBLIC_ACCESS', False):
             return cls.objects.filter(slug=settings.DEMO_WORKSPACE_SLUG)
         return cls.objects.none()

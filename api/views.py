@@ -1,13 +1,15 @@
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import permissions, viewsets
+from celery.result import AsyncResult
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from alerts.models import Alert, WebhookEndpoint
 from streams.models import Stream, Workspace
 
+from api.mixins import WorkspaceScopedMixin
 from api.serializers import (
     AlertSerializer,
     DataPointSerializer,
@@ -43,17 +45,72 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         serializer.save(owner=self.request.user)
 
 
-class StreamViewSet(viewsets.ModelViewSet):
+class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     serializer_class = StreamSerializer
     permission_classes = [IsAuthenticatedOrPublicDemo]
 
     def get_queryset(self):
-        return Stream.objects.filter(workspace__in=Workspace.accessible_to(self.request.user))
+        return Stream.objects.filter(workspace_id__in=self.get_user_workspace_ids())
 
     def perform_create(self, serializer):
         workspace = serializer.validated_data.get('workspace')
-        get_object_or_404(Workspace.accessible_to(self.request.user), pk=workspace.pk)
+        get_object_or_404(self.get_accessible_workspaces(), pk=workspace.pk)
         serializer.save()
+
+    @action(detail=True, methods=['post'], url_path='train-lstm')
+    def train_lstm(self, request, *args, **kwargs):
+        """Queue LSTM training for the stream and return the task id."""
+        stream = self.get_object()
+        if stream.detector_type != Stream.DETECTOR_LSTM:
+            return Response(
+                {'detail': 'Stream detector_type must be LSTM.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from detection.tasks import train_lstm_for_stream
+        task = train_lstm_for_stream.delay(stream.id)
+        return Response({'task_id': task.id}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['get'], url_path='training-status')
+    def training_status(self, request, *args, **kwargs):
+        """Report the state of a training task started via ``train-lstm``."""
+        self.get_object()
+        task_id = request.query_params.get('task_id')
+        if not task_id:
+            return Response(
+                {'detail': 'task_id query param required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result = AsyncResult(task_id)
+        return Response({
+            'state': result.state,
+            'meta': result.info if result.state == 'PROGRESS' else {},
+            'result': result.result if result.state == 'SUCCESS' else None,
+        })
+
+    @action(detail=True, methods=['post'], url_path='compare-detectors')
+    def compare_detectors(self, request, *args, **kwargs):
+        """Replay stored data through two detectors and report their agreement."""
+        stream = self.get_object()
+        type_a = request.data.get('a')
+        type_b = request.data.get('b')
+        valid = [Stream.DETECTOR_ZSCORE, Stream.DETECTOR_IQR, Stream.DETECTOR_LSTM]
+
+        if type_a not in valid or type_b not in valid:
+            return Response(
+                {'detail': f'detector must be one of {valid}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if type_a == type_b:
+            return Response(
+                {'detail': 'a and b must be different detectors.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from detection.comparison import compare_detectors as run_comparison
+        result = run_comparison(stream, type_a, type_b)
+        if 'error' in result:
+            return Response(result, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        return Response(result)
 
     @action(detail=True, methods=['post'])
     def pause(self, request, *args, **kwargs):
