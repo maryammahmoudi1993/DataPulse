@@ -80,6 +80,13 @@ class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
             stream__workspace__in=Workspace.accessible_to(self.request.user),
         )
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        limit = request.query_params.get('limit', '')
+        if limit.isdigit():
+            queryset = queryset[:int(limit)]
+        return Response(self.get_serializer(queryset, many=True).data)
+
 
 class AlertViewSet(viewsets.ReadOnlyModelViewSet):
     """Alerts of one stream, filterable by ``severity`` and ``status``."""
