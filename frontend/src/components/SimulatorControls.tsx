@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { apiRequest } from '../api'
 
 type Config = {
   amplitude: number
@@ -27,9 +28,8 @@ export function SimulatorControls({ streamId, current, onApply }: Props) {
     if (!streamId) return
     setError(null)
     try {
-      const response = await fetch(`/api/streams/${streamId}/`, {
+      const response = await apiRequest(`/streams/${streamId}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source_config: { ...current, ...cfg } }),
       })
       if (!response.ok) throw new Error(String(response.status))

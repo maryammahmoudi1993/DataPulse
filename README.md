@@ -53,6 +53,16 @@ default tasks run inline, which suits tests and quick experiments.
 | `POST /api/streams/{id}/alerts/{alert_id}/acknowledge/` | Acknowledge an alert |
 | `GET/POST /api/webhooks/` | Manage webhook endpoints |
 | `WS /ws/streams/{id}/` | Live `datapoint` and `alert` events |
+| `POST /api/auth/register/` | Create a user and its workspace; returns JWT pair |
+| `POST /api/auth/token/`, `/token/refresh/`, `/logout/` | Log in, renew, blacklist refresh token |
+| `GET /api/auth/me/` | Current user and workspace roles |
+| `POST /api/streams/{id}/train-lstm/` | Queue LSTM training (202 + `task_id`) |
+| `GET /api/streams/{id}/training-status/?task_id=` | Poll training progress |
+| `POST /api/streams/{id}/compare-detectors/` | Agreement stats for two detectors (`{"a": "ZSCORE", "b": "IQR"}`) |
+| `GET /health/`, `GET /readiness/` | Liveness and DB/Redis readiness |
+
+API calls send `Authorization: Bearer <access>`. WebSocket clients pass the
+token as subprotocol `['jwt', <access>]` so it never appears in a URL.
 
 Webhook payloads are signed with HMAC-SHA256 in the `X-DataPulse-Signature`
 header when the endpoint has a secret.

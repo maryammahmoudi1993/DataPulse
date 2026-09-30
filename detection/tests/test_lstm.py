@@ -56,10 +56,11 @@ def test_train_task_registers_model_path(db, settings, tmp_path):
         detector_config={'seq_len': 10},
     )
     DataPoint.objects.bulk_create(
-        DataPoint(stream=stream, timestamp=timezone.now(), value=v) for v in _sine(80)
+        DataPoint(stream=stream, timestamp=timezone.now(), value=v) for v in _sine(220)
     )
 
-    path = train_lstm_for_stream(stream.id, epochs=3)
+    result = train_lstm_for_stream(stream.id, epochs=3)
 
     stream.refresh_from_db()
-    assert stream.detector_config['model_path'] == path
+    assert result['status'] == 'ok'
+    assert stream.detector_config['model_path'] == result['path']

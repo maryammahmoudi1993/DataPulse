@@ -1,6 +1,7 @@
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
+from realtime.auth import JWT_SUBPROTOCOL
 from realtime.publisher import stream_group_name
 from streams.models import Stream, Workspace
 
@@ -17,7 +18,8 @@ class StreamConsumer(AsyncJsonWebsocketConsumer):
             return
 
         await self.channel_layer.group_add(self.group, self.channel_name)
-        await self.accept()
+        offered = self.scope.get('subprotocols') or []
+        await self.accept(subprotocol=JWT_SUBPROTOCOL if JWT_SUBPROTOCOL in offered else None)
 
     async def disconnect(self, code):
         if hasattr(self, 'group'):
