@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -26,7 +27,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'channels',
     'django_celery_beat',
+    'django_celery_results',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'streams',
     'ingestion',
     'detection',
@@ -34,6 +37,7 @@ INSTALLED_APPS = [
     'api',
     'alerts',
     'realtime',
+    'accounts',
 ]
 
 MIDDLEWARE = [
@@ -110,6 +114,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
     ],
@@ -122,7 +127,9 @@ REST_FRAMEWORK = {
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
 
 CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_CACHE_BACKEND = 'django-cache'
+DJANGO_CELERY_RESULTS_TASK_ID_MAX_LENGTH = 191
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -158,3 +165,28 @@ LSTM_MODEL_DIR = env('LSTM_MODEL_DIR', default=str(BASE_DIR / 'media' / 'lstm_mo
 
 DEMO_WORKSPACE_SLUG = 'demo'
 DEMO_PUBLIC_ACCESS = env.bool('DEMO_PUBLIC_ACCESS', default=False)
+
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'ALGORITHM': 'HS256',
+}
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'json': {'()': 'datapulse.logging_config.JSONFormatter'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'json'},
+    },
+    'loggers': {
+        name: {'handlers': ['console'], 'level': 'INFO', 'propagate': False}
+        for name in ('datapulse', 'ingestion', 'detection', 'alerts', 'api', 'accounts')
+    },
+    'root': {'handlers': ['console'], 'level': 'WARNING'},
+}
