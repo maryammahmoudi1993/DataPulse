@@ -1,24 +1,49 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useStreamSocket } from './hooks/useStreamSocket'
 import { StreamChart } from './components/StreamChart'
 import { AlertFeed } from './components/AlertFeed'
 import { SimulatorControls } from './components/SimulatorControls'
+import { LSTMPanel } from './components/LSTMPanel'
+import { LoginPage } from './components/LoginPage'
+import { CreateStreamModal } from './components/CreateStreamModal'
+import { api, clearSession } from './api'
 import type { StreamInfo } from './types'
 
 export default function App() {
+  const [authed, setAuthed] = useState(!!localStorage.getItem('access'))
+  const [showCreate, setShowCreate] = useState(false)
+  const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [streams, setStreams] = useState<StreamInfo[]>([])
   const [activeStreamId, setActiveStreamId] = useState<number | null>(null)
-  const { points, alerts, connected } = useStreamSocket(activeStreamId)
+  const { points, alerts, connected } = useStreamSocket(authed ? activeStreamId : null)
 
-  useEffect(() => {
-    fetch('/api/streams/')
-      .then(r => r.json())
-      .then((data: StreamInfo[]) => {
+  const loadStreams = useCallback(() => {
+    api.streams<StreamInfo[]>()
+      .then(data => {
         setStreams(data)
-        if (data.length > 0) setActiveStreamId(data[0].id)
+        setActiveStreamId(current => current ?? data[0]?.id ?? null)
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!authed) return
+    loadStreams()
+    api.me()
+      .then(me => setWorkspaceId(me.workspaces[0]?.id ?? null))
+      .catch(() => {})
+  }, [authed, loadStreams])
+
+  const logout = () => {
+    api.logout().catch(() => {}).finally(() => {
+      clearSession()
+      setStreams([])
+      setActiveStreamId(null)
+      setAuthed(false)
+    })
+  }
+
+  if (!authed) return <LoginPage onLogin={() => setAuthed(true)} />
 
   const activeStream = streams.find(s => s.id === activeStreamId) ?? null
   const threshold = activeStream?.detector_config?.threshold ?? 3
@@ -38,9 +63,19 @@ export default function App() {
             Real-time anomaly detection
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-300'}`} />
-          <span className="text-xs text-gray-500">{connected ? 'Live' : 'Connecting…'}</span>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => setShowCreate(true)}
+            disabled={workspaceId === null}
+            className="text-sm px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+          >
+            + New stream
+          </button>
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-300'}`} />
+            <span className="text-xs text-gray-500">{connected ? 'Live' : 'Connecting…'}</span>
+          </div>
+          <button onClick={logout} className="text-xs text-gray-500 hover:text-gray-700">Sign out</button>
         </div>
       </header>
 
@@ -72,16 +107,29 @@ export default function App() {
             </p>
             <AlertFeed alerts={alerts} />
           </div>
-          {activeStream && activeStream.source_type === 'SIMULATOR' && (
-            <SimulatorControls
-              key={activeStream.id}
-              streamId={activeStreamId}
-              current={activeStream.source_config}
-              onApply={applySourceConfig}
-            />
-          )}
+          <div className="space-y-6">
+            {activeStream && activeStream.source_type === 'SIMULATOR' && (
+              <SimulatorControls
+                key={activeStream.id}
+                streamId={activeStreamId}
+                current={activeStream.source_config}
+                onApply={applySourceConfig}
+              />
+            )}
+            {activeStream && activeStream.detector_type === 'LSTM' && (
+              <LSTMPanel streamId={activeStreamId} />
+            )}
+          </div>
         </div>
       </main>
+
+      {showCreate && workspaceId !== null && (
+        <CreateStreamModal
+          workspaceId={workspaceId}
+          onCreated={loadStreams}
+          onClose={() => setShowCreate(false)}
+        />
+      )}
     </div>
   )
 }

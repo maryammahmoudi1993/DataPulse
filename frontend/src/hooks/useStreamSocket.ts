@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiRequest, getToken } from '../api'
 import type { DataPoint, StreamAlert } from '../types'
 
 const MAX_POINTS = 200
@@ -23,7 +24,7 @@ export function useStreamSocket(streamId: number | null): SocketState {
     let cancelled = false
 
     // Backfill recent history so the chart is not empty on load.
-    fetch(`/api/streams/${streamId}/datapoints/?limit=${MAX_POINTS}`)
+    apiRequest(`/streams/${streamId}/datapoints/?limit=${MAX_POINTS}`)
       .then(r => (r.ok ? r.json() : []))
       .then((history: DataPoint[]) => {
         if (cancelled) return
@@ -35,7 +36,7 @@ export function useStreamSocket(streamId: number | null): SocketState {
       })
       .catch(() => {})
 
-    fetch(`/api/streams/${streamId}/alerts/`)
+    apiRequest(`/streams/${streamId}/alerts/`)
       .then(r => (r.ok ? r.json() : []))
       .then((history: Array<{ id: number; severity: StreamAlert['severity']; anomaly_score: number; value: number; timestamp: string }>) => {
         if (cancelled) return
@@ -55,7 +56,8 @@ export function useStreamSocket(streamId: number | null): SocketState {
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const url = `${protocol}://${window.location.host}/ws/streams/${streamId}/`
-    const ws = new WebSocket(url)
+    const token = getToken()
+    const ws = token ? new WebSocket(url, ['jwt', token]) : new WebSocket(url)
 
     ws.onopen = () => setConnected(true)
     ws.onclose = () => setConnected(false)
