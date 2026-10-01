@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     'alerts',
     'realtime',
     'accounts',
+    'exports',
+    'reports',
 ]
 
 MIDDLEWARE = [
@@ -121,6 +123,15 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '20/min',
+        'user': '200/min',
+        'workspace': '1000/hour',
+    },
 }
 
 
@@ -142,6 +153,18 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'ingestion.tasks.poll_all_active_streams',
         'schedule': 5.0,
     },
+    'cleanup-old-datapoints': {
+        'task': 'ingestion.tasks.cleanup_old_datapoints',
+        'schedule': 3600 * 24,
+    },
+    'send-alert-digest': {
+        'task': 'reports.tasks.send_daily_alert_digest',
+        'schedule': 3600 * 24,
+    },
+    'cleanup-stale-exports': {
+        'task': 'exports.tasks.cleanup_stale_exports',
+        'schedule': 3600 * 6,
+    },
 }
 
 
@@ -162,6 +185,21 @@ ALERT_DEDUP_WINDOW_MINUTES = env.int('ALERT_DEDUP_WINDOW_MINUTES', default=5)
 ALERT_WEBHOOK_TIMEOUT_SECONDS = env.int('ALERT_WEBHOOK_TIMEOUT_SECONDS', default=5)
 
 LSTM_MODEL_DIR = env('LSTM_MODEL_DIR', default=str(BASE_DIR / 'media' / 'lstm_models'))
+
+# Prometheus
+PROMETHEUS_METRICS_EXPORT_PORT = 8001
+PROMETHEUS_METRICS_EXPORT_HOST = '0.0.0.0'
+
+# Data export
+EXPORT_ROOT = env('EXPORT_ROOT', default=str(BASE_DIR / 'media' / 'exports'))
+EXPORT_TTL_HOURS = env.int('EXPORT_TTL_HOURS', default=24)
+
+# Alert digest
+SMTP_HOST = env('SMTP_HOST', default='smtp.gmail.com')
+SMTP_PORT = env.int('SMTP_PORT', default=587)
+SMTP_USER = env('SMTP_USER', default='')
+SMTP_PASSWORD = env('SMTP_PASSWORD', default='')
+SMTP_FROM = env('SMTP_FROM', default='noreply@datapulse.local')
 
 DEMO_WORKSPACE_SLUG = 'demo'
 DEMO_PUBLIC_ACCESS = env.bool('DEMO_PUBLIC_ACCESS', default=False)
