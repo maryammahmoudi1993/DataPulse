@@ -13,6 +13,7 @@ from alerts.models import Alert, WebhookEndpoint
 from streams.models import Stream, Workspace
 
 from api.mixins import WorkspaceScopedMixin
+from api.pagination import TimestampCursorPagination
 from api.serializers import (
     AlertSerializer,
     DataPointSerializer,
@@ -20,6 +21,7 @@ from api.serializers import (
     WebhookEndpointSerializer,
     WorkspaceSerializer,
 )
+from api.throttles import WorkspaceRateThrottle
 from exports.models import ExportJob
 from exports.tasks import run_export
 from ingestion.models import DataPoint
@@ -56,6 +58,11 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         return Stream.objects.filter(workspace_id__in=self.get_user_workspace_ids())
+
+    def get_throttles(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [WorkspaceRateThrottle()]
+        return super().get_throttles()
 
     def perform_create(self, serializer):
         workspace = serializer.validated_data.get('workspace')
@@ -187,7 +194,14 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
 
 
 class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
+    """Data points of one stream.
+
+    Cursor-paginated, newest first. The legacy ``limit`` query parameter
+    still returns a plain list of the newest points.
+    """
+
     serializer_class = DataPointSerializer
+    pagination_class = TimestampCursorPagination
 
     def get_queryset(self):
         stream_pk = self.kwargs.get('stream_pk')
@@ -200,8 +214,9 @@ class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = self.filter_queryset(self.get_queryset())
         limit = request.query_params.get('limit', '')
         if limit.isdigit():
-            queryset = queryset[:int(limit)]
-        return Response(self.get_serializer(queryset, many=True).data)
+            return Response(self.get_serializer(queryset[:int(limit)], many=True).data)
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
 
 
 class AlertViewSet(viewsets.ReadOnlyModelViewSet):
