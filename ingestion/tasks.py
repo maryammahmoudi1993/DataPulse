@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from streams.models import Stream
 
+from datapulse.metrics import datapoints_ingested
 from detection.pipeline import detect_and_alert
 from realtime.publisher import publish_stream_event
 from ingestion.models import DataPoint
@@ -37,6 +38,8 @@ def poll_stream(stream_id):
         timestamp=timezone.now(),
         value=value,
     )
+
+    datapoints_ingested.labels(stream_id=stream.id).inc()
 
     publish_stream_event(stream.id, {
         'type': 'datapoint',

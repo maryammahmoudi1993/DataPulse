@@ -8,6 +8,7 @@ from celery import shared_task
 from django.conf import settings
 
 from alerts.models import Alert, WebhookEndpoint
+from datapulse.metrics import webhooks_dispatched
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,9 @@ def dispatch_webhooks(alert_id):
                 timeout=settings.ALERT_WEBHOOK_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
+            webhooks_dispatched.labels(status='ok').inc()
             delivered += 1
         except requests.RequestException as e:
+            webhooks_dispatched.labels(status='error').inc()
             logger.warning('Webhook %s failed: %s', endpoint.pk, e)
     return delivered
