@@ -58,10 +58,12 @@ class Stream(models.Model):
     DETECTOR_ZSCORE = 'ZSCORE'
     DETECTOR_IQR = 'IQR'
     DETECTOR_LSTM = 'LSTM'
+    DETECTOR_ENSEMBLE = 'ENSEMBLE'
     DETECTOR_CHOICES = [
         (DETECTOR_ZSCORE, 'Z-Score'),
         (DETECTOR_IQR, 'IQR'),
         (DETECTOR_LSTM, 'LSTM'),
+        (DETECTOR_ENSEMBLE, 'Ensemble'),
     ]
 
     STATUS_ACTIVE = 'ACTIVE'
