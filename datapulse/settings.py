@@ -224,7 +224,7 @@ LOGGING = {
     },
     'loggers': {
         name: {'handlers': ['console'], 'level': 'INFO', 'propagate': False}
-        for name in ('datapulse', 'ingestion', 'detection', 'alerts', 'api', 'accounts')
+        for name in ('datapulse', 'ingestion', 'detection', 'alerts', 'api', 'accounts', 'exports', 'reports')
     },
     'root': {'handlers': ['console'], 'level': 'WARNING'},
 }
