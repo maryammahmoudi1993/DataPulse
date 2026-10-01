@@ -4,6 +4,8 @@ import { StreamChart } from './components/StreamChart'
 import { AlertFeed } from './components/AlertFeed'
 import { SimulatorControls } from './components/SimulatorControls'
 import { LSTMPanel } from './components/LSTMPanel'
+import { StatsPanel } from './components/StatsPanel'
+import { ExportButton } from './components/ExportButton'
 import { LoginPage } from './components/LoginPage'
 import { CreateStreamModal } from './components/CreateStreamModal'
 import { api, clearSession } from './api'
@@ -106,8 +108,12 @@ export default function App() {
               Alert feed
             </p>
             <AlertFeed alerts={alerts} />
+            <div className="mt-3 flex justify-end">
+              <ExportButton streamId={activeStreamId} />
+            </div>
           </div>
           <div className="space-y-6">
+            <StatsPanel alerts={alerts} />
             {activeStream && activeStream.source_type === 'SIMULATOR' && (
               <SimulatorControls
                 key={activeStream.id}

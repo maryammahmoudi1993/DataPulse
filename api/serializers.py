@@ -25,6 +25,7 @@ class StreamSerializer(serializers.ModelSerializer):
             'detector_type',
             'detector_config',
             'status',
+            'retention_days',
             'created_at',
             'updated_at',
         ]

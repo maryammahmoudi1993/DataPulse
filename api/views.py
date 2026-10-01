@@ -1,4 +1,7 @@
+import os
+
 from django.conf import settings
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from celery.result import AsyncResult
@@ -10,6 +13,7 @@ from alerts.models import Alert, WebhookEndpoint
 from streams.models import Stream, Workspace
 
 from api.mixins import WorkspaceScopedMixin
+from api.pagination import TimestampCursorPagination
 from api.serializers import (
     AlertSerializer,
     DataPointSerializer,
@@ -17,6 +21,9 @@ from api.serializers import (
     WebhookEndpointSerializer,
     WorkspaceSerializer,
 )
+from api.throttles import WorkspaceRateThrottle
+from exports.models import ExportJob
+from exports.tasks import run_export
 from ingestion.models import DataPoint
 
 
@@ -51,6 +58,11 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         return Stream.objects.filter(workspace_id__in=self.get_user_workspace_ids())
+
+    def get_throttles(self):
+        if self.action in ('create', 'update', 'partial_update', 'destroy'):
+            return [WorkspaceRateThrottle()]
+        return super().get_throttles()
 
     def perform_create(self, serializer):
         workspace = serializer.validated_data.get('workspace')
@@ -112,6 +124,60 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
             return Response(result, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
         return Response(result)
 
+    @action(detail=True, methods=['post'], url_path='export')
+    def export(self, request, *args, **kwargs):
+        """Queue a CSV export of the stream's data points or alerts."""
+        stream = self.get_object()
+        export_type = request.data.get('type', ExportJob.TYPE_DATAPOINTS)
+        if export_type not in (ExportJob.TYPE_DATAPOINTS, ExportJob.TYPE_ALERTS):
+            return Response(
+                {'detail': 'type must be DATAPOINTS or ALERTS.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        job = ExportJob.objects.create(stream=stream, requested_by=request.user, export_type=export_type)
+        run_export.delay(job.id)
+        return Response({'job_id': job.id, 'status': job.status}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=['get'], url_path=r'export/(?P<job_id>[0-9]+)')
+    def export_status(self, request, job_id=None, *args, **kwargs):
+        """Report the state of an export job and, once done, its download URL."""
+        stream = self.get_object()
+        try:
+            job = ExportJob.objects.get(pk=job_id, stream=stream)
+        except ExportJob.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = {
+            'job_id': job.id,
+            'status': job.status,
+            'export_type': job.export_type,
+            'row_count': job.row_count,
+            'created_at': job.created_at.isoformat(),
+            'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+        }
+        if job.status == ExportJob.STATUS_DONE:
+            data['download_url'] = f'/api/streams/{stream.id}/export/{job.id}/download/'
+        return Response(data)
+
+    @action(detail=True, methods=['get'], url_path=r'export/(?P<job_id>[0-9]+)/download')
+    def export_download(self, request, job_id=None, *args, **kwargs):
+        """Stream the finished CSV file."""
+        stream = self.get_object()
+        try:
+            job = ExportJob.objects.get(pk=job_id, stream=stream, status=ExportJob.STATUS_DONE)
+        except ExportJob.DoesNotExist:
+            return Response(
+                {'detail': 'Export not ready or not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not os.path.exists(job.file_path):
+            return Response({'detail': 'File no longer available.'}, status=status.HTTP_410_GONE)
+        return FileResponse(
+            open(job.file_path, 'rb'),
+            as_attachment=True,
+            filename=f'stream_{stream.id}_{job.export_type.lower()}.csv',
+        )
+
     @action(detail=True, methods=['post'])
     def pause(self, request, *args, **kwargs):
         stream = self.get_object()
@@ -128,7 +194,14 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
 
 
 class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
+    """Data points of one stream.
+
+    Cursor-paginated, newest first. The legacy ``limit`` query parameter
+    still returns a plain list of the newest points.
+    """
+
     serializer_class = DataPointSerializer
+    pagination_class = TimestampCursorPagination
 
     def get_queryset(self):
         stream_pk = self.kwargs.get('stream_pk')
@@ -141,8 +214,9 @@ class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = self.filter_queryset(self.get_queryset())
         limit = request.query_params.get('limit', '')
         if limit.isdigit():
-            queryset = queryset[:int(limit)]
-        return Response(self.get_serializer(queryset, many=True).data)
+            return Response(self.get_serializer(queryset[:int(limit)], many=True).data)
+        page = self.paginate_queryset(queryset)
+        return self.get_paginated_response(self.get_serializer(page, many=True).data)
 
 
 class AlertViewSet(viewsets.ReadOnlyModelViewSet):

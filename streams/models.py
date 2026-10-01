@@ -58,10 +58,12 @@ class Stream(models.Model):
     DETECTOR_ZSCORE = 'ZSCORE'
     DETECTOR_IQR = 'IQR'
     DETECTOR_LSTM = 'LSTM'
+    DETECTOR_ENSEMBLE = 'ENSEMBLE'
     DETECTOR_CHOICES = [
         (DETECTOR_ZSCORE, 'Z-Score'),
         (DETECTOR_IQR, 'IQR'),
         (DETECTOR_LSTM, 'LSTM'),
+        (DETECTOR_ENSEMBLE, 'Ensemble'),
     ]
 
     STATUS_ACTIVE = 'ACTIVE'
@@ -81,6 +83,11 @@ class Stream(models.Model):
     detector_type = models.CharField(max_length=20, choices=DETECTOR_CHOICES, default=DETECTOR_ZSCORE)
     detector_config = models.JSONField(default=dict)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    retention_days = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='Auto-delete DataPoints older than N days. Null = keep forever.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

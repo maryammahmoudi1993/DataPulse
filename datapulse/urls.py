@@ -4,6 +4,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from accounts.views import LogoutView, MeView, RegisterView
 from api.health import health, readiness
+from api.metrics_view import metrics_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -16,4 +17,5 @@ urlpatterns = [
     path('api/auth/me/', MeView.as_view(), name='auth-me'),
     path('health/', health, name='health'),
     path('readiness/', readiness, name='readiness'),
+    path('metrics/', metrics_view, name='metrics'),
 ]

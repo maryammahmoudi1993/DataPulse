@@ -7,7 +7,7 @@ interface Props {
   onClose: () => void
 }
 
-const DETECTORS = ['ZSCORE', 'IQR', 'LSTM']
+const DETECTORS = ['ZSCORE', 'IQR', 'LSTM', 'ENSEMBLE']
 
 export function CreateStreamModal({ workspaceId, onCreated, onClose }: Props) {
   const [name, setName] = useState('')

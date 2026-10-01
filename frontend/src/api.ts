@@ -96,6 +96,19 @@ export const api = {
     apiFetch<{ state: string; meta: object; result: { status?: string } | null }>(
       `/streams/${id}/training-status/?task_id=${encodeURIComponent(taskId)}`
     ),
+  exportStart: (streamId: number, type: string) =>
+    apiFetch<{ job_id: number; status: string }>(
+      `/streams/${streamId}/export/`, { method: 'POST', body: JSON.stringify({ type }) }
+    ),
+  exportStatus: (streamId: number, jobId: number) =>
+    apiFetch<{ status: string; row_count: number | null; download_url?: string }>(
+      `/streams/${streamId}/export/${jobId}/`
+    ),
+  downloadExport: async (streamId: number, jobId: number): Promise<Blob> => {
+    const res = await apiRequest(`/streams/${streamId}/export/${jobId}/download/`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return res.blob()
+  },
   compareDetectors: (id: number, a: string, b: string) =>
     apiFetch<object>(`/streams/${id}/compare-detectors/`, {
       method: 'POST',

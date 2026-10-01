@@ -1,7 +1,9 @@
 import logging
+import time
 
 from celery import shared_task
 
+from datapulse.metrics import anomalies_detected, detection_latency
 from detection.factory import get_detector
 
 logger = logging.getLogger(__name__)
@@ -34,7 +36,11 @@ def detect_and_alert(point_id):
 
     detector = get_detector(stream)
     detector.fit(history)
+    started = time.perf_counter()
     result = detector.detect(point.value)
+    detection_latency.labels(detector_type=stream.detector_type).observe(time.perf_counter() - started)
+    if result.is_anomaly:
+        anomalies_detected.labels(severity=result.severity, detector_type=stream.detector_type).inc()
 
     logger.info('Detection complete', extra={
         'stream_id': stream.id,
