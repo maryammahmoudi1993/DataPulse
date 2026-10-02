@@ -21,3 +21,32 @@ export interface StreamInfo {
   detector_config: Record<string, number>
   status: string
 }
+
+export interface Member {
+  user_id: number
+  username: string
+  email: string
+  role: 'OWNER' | 'MEMBER' | 'VIEWER'
+  joined_at: string
+}
+
+export interface Invite {
+  id: number
+  email: string
+  role: string
+  status: string
+  expires_at: string
+  invited_by_username: string | null
+  created_at: string
+}
+
+export interface AuditEntry {
+  id: number
+  action: string
+  actor_username: string | null
+  target_username: string | null
+  stream_name: string | null
+  metadata: Record<string, unknown>
+  ip_address: string | null
+  created_at: string
+}

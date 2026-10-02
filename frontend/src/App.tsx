@@ -8,13 +8,16 @@ import { StatsPanel } from './components/StatsPanel'
 import { ExportButton } from './components/ExportButton'
 import { LoginPage } from './components/LoginPage'
 import { CreateStreamModal } from './components/CreateStreamModal'
+import { WorkspaceSettings } from './components/WorkspaceSettings'
 import { api, clearSession } from './api'
 import type { StreamInfo } from './types'
 
 export default function App() {
   const [authed, setAuthed] = useState(!!localStorage.getItem('access'))
   const [showCreate, setShowCreate] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<number | null>(null)
   const [streams, setStreams] = useState<StreamInfo[]>([])
   const [activeStreamId, setActiveStreamId] = useState<number | null>(null)
   const { points, alerts, connected } = useStreamSocket(authed ? activeStreamId : null)
@@ -32,7 +35,10 @@ export default function App() {
     if (!authed) return
     loadStreams()
     api.me()
-      .then(me => setWorkspaceId(me.workspaces[0]?.id ?? null))
+      .then(me => {
+        setWorkspaceId(me.workspaces[0]?.id ?? null)
+        setCurrentUserId(me.id)
+      })
       .catch(() => {})
   }, [authed, loadStreams])
 
@@ -72,6 +78,13 @@ export default function App() {
             className="text-sm px-3 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
           >
             + New stream
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            disabled={workspaceId === null}
+            className="text-sm px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+          >
+            ⚙ Settings
           </button>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-gray-300'}`} />
@@ -128,6 +141,14 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {showSettings && workspaceId !== null && currentUserId !== null && (
+        <WorkspaceSettings
+          workspaceId={workspaceId}
+          currentUserId={currentUserId}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
 
       {showCreate && workspaceId !== null && (
         <CreateStreamModal
