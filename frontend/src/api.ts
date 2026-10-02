@@ -1,3 +1,5 @@
+import type { AuditEntry, Invite, Member } from './types'
+
 const BASE = '/api'
 
 export interface Tokens {
@@ -108,6 +110,28 @@ export const api = {
     const res = await apiRequest(`/streams/${streamId}/export/${jobId}/download/`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return res.blob()
+  },
+  members: (workspaceId: number) =>
+    apiFetch<Member[]>(`/workspaces/${workspaceId}/members/`),
+  changeMemberRole: (workspaceId: number, userId: number, role: string) =>
+    apiFetch<Member>(`/workspaces/${workspaceId}/members/${userId}/`,
+      { method: 'PATCH', body: JSON.stringify({ role }) }),
+  removeMember: (workspaceId: number, userId: number) =>
+    apiFetch<void>(`/workspaces/${workspaceId}/members/${userId}/`, { method: 'DELETE' }),
+  listInvites: (workspaceId: number) =>
+    apiFetch<Invite[]>(`/workspaces/${workspaceId}/invites/`),
+  createInvite: (workspaceId: number, email: string, role: string) =>
+    apiFetch<Invite>(`/workspaces/${workspaceId}/invites/`,
+      { method: 'POST', body: JSON.stringify({ email, role }) }),
+  revokeInvite: (workspaceId: number, inviteId: number) =>
+    apiFetch<void>(`/workspaces/${workspaceId}/invites/${inviteId}/`, { method: 'DELETE' }),
+  acceptInvite: (token: string) =>
+    apiFetch<{ workspace_slug: string; role: string }>(
+      `/invites/${encodeURIComponent(token)}/accept/`, { method: 'POST' }
+    ),
+  auditLog: (workspaceId: number, action?: string) => {
+    const qs = action ? `?action=${encodeURIComponent(action)}` : ''
+    return apiFetch<AuditEntry[]>(`/workspaces/${workspaceId}/audit/${qs}`)
   },
   compareDetectors: (id: number, a: string, b: string) =>
     apiFetch<object>(`/streams/${id}/compare-detectors/`, {

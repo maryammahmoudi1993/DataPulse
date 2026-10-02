@@ -5,7 +5,7 @@ from rest_framework import serializers
 
 from streams.models import Workspace
 
-from accounts.models import UserWorkspace
+from accounts.models import UserWorkspace, WorkspaceInvite
 
 User = get_user_model()
 
@@ -61,3 +61,23 @@ class UserSerializer(serializers.ModelSerializer):
             {'id': m.workspace_id, 'slug': m.workspace.slug, 'role': m.role}
             for m in memberships
         ]
+
+
+class WorkspaceInviteSerializer(serializers.ModelSerializer):
+    invited_by_username = serializers.CharField(source='invited_by.username', read_only=True, default=None)
+
+    class Meta:
+        model = WorkspaceInvite
+        fields = ['id', 'email', 'role', 'status', 'expires_at', 'invited_by_username', 'created_at']
+        read_only_fields = ['status', 'expires_at', 'invited_by_username', 'created_at']
+
+
+class MemberSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    email = serializers.CharField(source='user.email', read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+
+    class Meta:
+        model = UserWorkspace
+        fields = ['user_id', 'username', 'email', 'role', 'joined_at']
+        read_only_fields = ['user_id', 'username', 'email', 'joined_at']
