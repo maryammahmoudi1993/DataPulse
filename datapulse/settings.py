@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'accounts',
     'exports',
     'reports',
+    'audit',
 ]
 
 MIDDLEWARE = [
@@ -200,6 +201,10 @@ SMTP_PORT = env.int('SMTP_PORT', default=587)
 SMTP_USER = env('SMTP_USER', default='')
 SMTP_PASSWORD = env('SMTP_PASSWORD', default='')
 SMTP_FROM = env('SMTP_FROM', default='noreply@datapulse.local')
+
+# Workspace invites
+INVITE_TOKEN_TTL_DAYS = env.int('INVITE_TOKEN_TTL_DAYS', default=7)
+INVITE_BASE_URL = env('INVITE_BASE_URL', default='http://localhost:8000')
 
 DEMO_WORKSPACE_SLUG = 'demo'
 DEMO_PUBLIC_ACCESS = env.bool('DEMO_PUBLIC_ACCESS', default=False)
