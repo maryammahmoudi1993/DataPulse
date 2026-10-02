@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from alerts.models import Alert, WebhookEndpoint
+from audit.models import AuditEvent
 from ingestion.models import DataPoint
 from streams.models import Stream, Workspace
 
@@ -63,3 +64,16 @@ class WebhookEndpointSerializer(serializers.ModelSerializer):
         fields = ['id', 'workspace', 'name', 'url', 'min_severity', 'secret', 'is_active', 'created_at']
         read_only_fields = ['id', 'created_at']
         extra_kwargs = {'secret': {'write_only': True}}
+
+
+class AuditEventSerializer(serializers.ModelSerializer):
+    actor_username = serializers.CharField(source='actor.username', read_only=True, default=None)
+    target_username = serializers.CharField(source='target_user.username', read_only=True, default=None)
+    stream_name = serializers.CharField(source='stream.name', read_only=True, default=None)
+
+    class Meta:
+        model = AuditEvent
+        fields = [
+            'id', 'action', 'actor_username', 'target_username',
+            'stream_name', 'metadata', 'ip_address', 'created_at',
+        ]

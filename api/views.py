@@ -7,8 +7,13 @@ from django.utils import timezone
 from celery.result import AsyncResult
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from accounts.invite_service import accept_invite, create_invite
+from accounts.models import UserWorkspace, WorkspaceInvite
+from accounts.serializers import MemberSerializer, WorkspaceInviteSerializer
 from alerts.models import Alert, WebhookEndpoint
 from streams.models import Stream, Workspace
 
@@ -16,12 +21,15 @@ from api.mixins import WorkspaceScopedMixin
 from api.pagination import TimestampCursorPagination
 from api.serializers import (
     AlertSerializer,
+    AuditEventSerializer,
     DataPointSerializer,
     StreamSerializer,
     WebhookEndpointSerializer,
     WorkspaceSerializer,
 )
 from api.throttles import WorkspaceRateThrottle
+from audit.models import AuditEvent
+from audit.services import get_client_ip, log_event
 from exports.models import ExportJob
 from exports.tasks import run_export
 from ingestion.models import DataPoint
@@ -67,7 +75,14 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         workspace = serializer.validated_data.get('workspace')
         get_object_or_404(self.get_accessible_workspaces(), pk=workspace.pk)
-        serializer.save()
+        stream = serializer.save()
+        log_event(actor=self.request.user, workspace=stream.workspace, action='STREAM_CREATED',
+                  stream=stream, ip_address=get_client_ip(self.request))
+
+    def perform_destroy(self, instance):
+        log_event(actor=self.request.user, workspace=instance.workspace, action='STREAM_DELETED',
+                  metadata={'stream_name': instance.name}, ip_address=get_client_ip(self.request))
+        instance.delete()
 
     @action(detail=True, methods=['post'], url_path='train-lstm')
     def train_lstm(self, request, *args, **kwargs):
@@ -80,6 +95,8 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
             )
         from detection.tasks import train_lstm_for_stream
         task = train_lstm_for_stream.delay(stream.id)
+        log_event(actor=request.user, workspace=stream.workspace, action='LSTM_TRAINING_TRIGGERED',
+                  stream=stream, ip_address=get_client_ip(request))
         return Response({'task_id': task.id}, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get'], url_path='training-status')
@@ -136,6 +153,8 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
             )
         job = ExportJob.objects.create(stream=stream, requested_by=request.user, export_type=export_type)
         run_export.delay(job.id)
+        log_event(actor=request.user, workspace=stream.workspace, action='EXPORT_REQUESTED',
+                  stream=stream, metadata={'export_type': export_type}, ip_address=get_client_ip(request))
         return Response({'job_id': job.id, 'status': job.status}, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=True, methods=['get'], url_path=r'export/(?P<job_id>[0-9]+)')
@@ -183,6 +202,8 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         stream = self.get_object()
         stream.status = Stream.STATUS_PAUSED
         stream.save(update_fields=['status'])
+        log_event(actor=request.user, workspace=stream.workspace, action='STREAM_PAUSED',
+                  stream=stream, ip_address=get_client_ip(request))
         return Response(StreamSerializer(stream).data)
 
     @action(detail=True, methods=['post'])
@@ -190,6 +211,8 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         stream = self.get_object()
         stream.status = Stream.STATUS_ACTIVE
         stream.save(update_fields=['status'])
+        log_event(actor=request.user, workspace=stream.workspace, action='STREAM_RESUMED',
+                  stream=stream, ip_address=get_client_ip(request))
         return Response(StreamSerializer(stream).data)
 
 
@@ -245,6 +268,8 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         alert.acknowledged_by = request.user
         alert.acknowledged_at = timezone.now()
         alert.save(update_fields=['status', 'acknowledged_by', 'acknowledged_at'])
+        log_event(actor=request.user, workspace=alert.stream.workspace, action='ALERT_ACKNOWLEDGED',
+                  stream=alert.stream, metadata={'alert_id': alert.id}, ip_address=get_client_ip(request))
         return Response(AlertSerializer(alert).data)
 
 
@@ -258,3 +283,169 @@ class WebhookEndpointViewSet(viewsets.ModelViewSet):
         workspace = serializer.validated_data.get('workspace')
         get_object_or_404(Workspace.accessible_to(self.request.user), pk=workspace.pk)
         serializer.save()
+        log_event(actor=self.request.user, workspace=workspace, action='WEBHOOK_CREATED',
+                  metadata={'url': serializer.validated_data['url']}, ip_address=get_client_ip(self.request))
+
+    def perform_destroy(self, instance):
+        log_event(actor=self.request.user, workspace=instance.workspace, action='WEBHOOK_DELETED',
+                  metadata={'webhook_id': instance.pk}, ip_address=get_client_ip(self.request))
+        instance.delete()
+
+
+class WorkspaceAdminMixin(WorkspaceScopedMixin):
+    """Workspace lookup and owner check shared by the nested workspace viewsets."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_workspace(self, workspace_pk):
+        """Return the accessible workspace ``workspace_pk`` or raise 404."""
+        if not str(workspace_pk).isdigit():
+            raise NotFound
+        return get_object_or_404(self.get_accessible_workspaces(), pk=workspace_pk)
+
+    def _require_owner(self, workspace, user, message):
+        """Raise 403 unless ``user`` owns ``workspace``."""
+        is_owner = UserWorkspace.objects.filter(
+            workspace=workspace, user=user, role=UserWorkspace.ROLE_OWNER,
+        ).exists()
+        if not is_owner:
+            raise PermissionDenied(message)
+
+
+def _member_lookup(workspace, pk):
+    """Return the membership of user id ``pk`` in ``workspace`` or None."""
+    if not str(pk).isdigit():
+        return None
+    return UserWorkspace.objects.select_related('user').filter(workspace=workspace, user_id=pk).first()
+
+
+class WorkspaceMemberViewSet(WorkspaceAdminMixin, viewsets.ViewSet):
+    """List members of a workspace; owners may change roles and remove members."""
+
+    def list(self, request, workspace_pk=None):
+        workspace = self._get_workspace(workspace_pk)
+        members = UserWorkspace.objects.filter(workspace=workspace).select_related('user')
+        return Response(MemberSerializer(members, many=True).data)
+
+    def partial_update(self, request, workspace_pk=None, pk=None):
+        workspace = self._get_workspace(workspace_pk)
+        self._require_owner(workspace, request.user, 'Only workspace owners can manage members.')
+
+        membership = _member_lookup(workspace, pk)
+        if membership is None:
+            return Response({'detail': 'Member not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        new_role = request.data.get('role')
+        if new_role not in dict(UserWorkspace.ROLE_CHOICES):
+            return Response({'detail': f'Invalid role: {new_role}'}, status=status.HTTP_400_BAD_REQUEST)
+        if membership.user == request.user and new_role != UserWorkspace.ROLE_OWNER:
+            return Response({'detail': 'You cannot demote yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership.role = new_role
+        membership.save(update_fields=['role'])
+        log_event(actor=request.user, workspace=workspace, action='MEMBER_ROLE_CHANGED',
+                  target_user=membership.user, metadata={'new_role': new_role},
+                  ip_address=get_client_ip(request))
+        return Response(MemberSerializer(membership).data)
+
+    def destroy(self, request, workspace_pk=None, pk=None):
+        workspace = self._get_workspace(workspace_pk)
+        self._require_owner(workspace, request.user, 'Only workspace owners can manage members.')
+
+        if str(request.user.pk) == str(pk):
+            return Response(
+                {'detail': 'You cannot remove yourself from the workspace.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        membership = _member_lookup(workspace, pk)
+        if membership is None:
+            return Response({'detail': 'Member not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        owner_count = UserWorkspace.objects.filter(workspace=workspace, role=UserWorkspace.ROLE_OWNER).count()
+        if membership.role == UserWorkspace.ROLE_OWNER and owner_count <= 1:
+            return Response(
+                {'detail': 'Cannot remove the last owner of a workspace.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        removed = membership.user
+        membership.delete()
+        log_event(actor=request.user, workspace=workspace, action='MEMBER_REMOVED',
+                  target_user=removed, metadata={'removed_user_id': removed.pk},
+                  ip_address=get_client_ip(request))
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WorkspaceInviteViewSet(WorkspaceAdminMixin, viewsets.ViewSet):
+    """List, create and revoke pending invites. Owner access only."""
+
+    def _owner_workspace(self, request, workspace_pk):
+        workspace = self._get_workspace(workspace_pk)
+        self._require_owner(workspace, request.user, 'Only workspace owners can manage invites.')
+        return workspace
+
+    def list(self, request, workspace_pk=None):
+        workspace = self._owner_workspace(request, workspace_pk)
+        invites = WorkspaceInvite.objects.filter(
+            workspace=workspace, status=WorkspaceInvite.STATUS_PENDING,
+        ).select_related('invited_by')
+        return Response(WorkspaceInviteSerializer(invites, many=True).data)
+
+    def create(self, request, workspace_pk=None):
+        workspace = self._owner_workspace(request, workspace_pk)
+        serializer = WorkspaceInviteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            invite = create_invite(
+                workspace=workspace,
+                invited_by=request.user,
+                email=serializer.validated_data['email'],
+                role=serializer.validated_data.get('role', UserWorkspace.ROLE_MEMBER),
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_event(actor=request.user, workspace=workspace, action='MEMBER_INVITED',
+                  metadata={'email': invite.email, 'role': invite.role}, ip_address=get_client_ip(request))
+        return Response(WorkspaceInviteSerializer(invite).data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, workspace_pk=None, pk=None):
+        workspace = self._owner_workspace(request, workspace_pk)
+        deleted, _ = WorkspaceInvite.objects.filter(
+            id=pk if str(pk).isdigit() else None, workspace=workspace, status=WorkspaceInvite.STATUS_PENDING,
+        ).delete()
+        if not deleted:
+            return Response({'detail': 'Invite not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AcceptInviteView(APIView):
+    """Accept an invite as the authenticated user."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, token):
+        try:
+            membership = accept_invite(token=token, user=request.user)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'workspace_id': membership.workspace_id,
+            'workspace_slug': membership.workspace.slug,
+            'role': membership.role,
+        })
+
+
+class WorkspaceAuditViewSet(WorkspaceAdminMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only audit log, owner access only; filter with ``?action=``."""
+
+    serializer_class = AuditEventSerializer
+
+    def get_queryset(self):
+        workspace = self._get_workspace(self.kwargs['workspace_pk'])
+        self._require_owner(workspace, self.request.user, 'Audit log is visible to workspace owners only.')
+        queryset = AuditEvent.objects.filter(workspace=workspace).select_related('actor', 'target_user', 'stream')
+        action_filter = self.request.query_params.get('action')
+        if action_filter:
+            queryset = queryset.filter(action=action_filter)
+        return queryset
