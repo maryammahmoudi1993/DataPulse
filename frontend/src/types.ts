@@ -50,3 +50,20 @@ export interface AuditEntry {
   ip_address: string | null
   created_at: string
 }
+
+export interface InviteInfo {
+  workspace_name: string
+  workspace_slug: string
+  role: string
+  invited_by: string | null
+  expires_at: string
+}
+
+/** Slack or PagerDuty settings. The secret (webhook URL or routing key) is write-only. */
+export interface NotifyConfig {
+  id?: number
+  webhook_url?: string
+  routing_key?: string
+  min_severity: string
+  is_active: boolean
+}

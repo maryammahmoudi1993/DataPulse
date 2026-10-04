@@ -1,4 +1,4 @@
-import type { AuditEntry, Invite, Member } from './types'
+import type { AuditEntry, Invite, InviteInfo, Member, NotifyConfig } from './types'
 
 const BASE = '/api'
 
@@ -73,11 +73,30 @@ export async function apiRequest(path: string, options: RequestInit = {}): Promi
   return res
 }
 
+/** Error raised for a non-2xx API response; ``status`` is the HTTP status code. */
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number) {
+    super(`HTTP ${status}`)
+    this.status = status
+  }
+}
+
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await apiRequest(path, options)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) throw new ApiError(res.status)
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
+}
+
+/** Create the workspace's integration, or update it when one already exists. */
+function saveIntegration(kind: 'slack' | 'pagerduty', workspaceId: number, data: Partial<NotifyConfig>) {
+  const path = `/integrations/${kind}/`
+  if (data.id !== undefined) {
+    return apiFetch<NotifyConfig>(`${path}${data.id}/`, { method: 'PATCH', body: JSON.stringify(data) })
+  }
+  return apiFetch<NotifyConfig>(path, { method: 'POST', body: JSON.stringify({ ...data, workspace: workspaceId }) })
 }
 
 export const api = {
@@ -129,6 +148,16 @@ export const api = {
     apiFetch<{ workspace_slug: string; role: string }>(
       `/invites/${encodeURIComponent(token)}/accept/`, { method: 'POST' }
     ),
+  inviteInfo: (token: string) =>
+    apiFetch<InviteInfo>(`/invites/${encodeURIComponent(token)}/`),
+  getSlackIntegration: (workspaceId: number) =>
+    apiFetch<NotifyConfig[]>(`/integrations/slack/?workspace=${workspaceId}`).then(list => list[0]),
+  saveSlackIntegration: (workspaceId: number, data: Partial<NotifyConfig>) =>
+    saveIntegration('slack', workspaceId, data),
+  getPagerDutyIntegration: (workspaceId: number) =>
+    apiFetch<NotifyConfig[]>(`/integrations/pagerduty/?workspace=${workspaceId}`).then(list => list[0]),
+  savePagerDutyIntegration: (workspaceId: number, data: Partial<NotifyConfig>) =>
+    saveIntegration('pagerduty', workspaceId, data),
   auditLog: (workspaceId: number, action?: string) => {
     const qs = action ? `?action=${encodeURIComponent(action)}` : ''
     return apiFetch<AuditEntry[]>(`/workspaces/${workspaceId}/audit/${qs}`)
