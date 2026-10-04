@@ -96,7 +96,7 @@ def _send_invite_email(invite):
         logger.warning('SMTP not configured - invite email not sent', extra={'invite_id': invite.id})
         return
 
-    base = getattr(settings, 'INVITE_BASE_URL', 'http://localhost:8000')
+    base = getattr(settings, 'INVITE_BASE_URL', 'http://localhost:3000')
     ttl = getattr(settings, 'INVITE_TOKEN_TTL_DAYS', 7)
     msg = EmailMessage()
     msg['Subject'] = f'You are invited to join {invite.workspace.name} on DataPulse'
@@ -104,7 +104,7 @@ def _send_invite_email(invite):
     msg['To'] = invite.email
     msg.set_content(
         f'You have been invited to join "{invite.workspace.name}" as {invite.role}.\n\n'
-        f'Accept your invite here:\n{base}/api/invites/{invite.token}/accept/\n\n'
+        f'Accept your invite here:\n{base}/invite/{invite.token}\n\n'
         f'This link expires in {ttl} days.'
     )
     try:
