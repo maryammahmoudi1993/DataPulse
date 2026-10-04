@@ -5,6 +5,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from celery.result import AsyncResult
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -23,6 +24,9 @@ from api.serializers import (
     AlertSerializer,
     AuditEventSerializer,
     DataPointSerializer,
+    NotificationLogSerializer,
+    PagerDutyIntegrationSerializer,
+    SlackIntegrationSerializer,
     StreamSerializer,
     WebhookEndpointSerializer,
     WorkspaceSerializer,
@@ -33,6 +37,7 @@ from audit.services import get_client_ip, log_event
 from exports.models import ExportJob
 from exports.tasks import run_export
 from ingestion.models import DataPoint
+from integrations.models import NotificationLog, PagerDutyIntegration, SlackIntegration
 
 
 class IsAuthenticatedOrPublicDemo(permissions.BasePermission):
@@ -72,6 +77,15 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
             return [WorkspaceRateThrottle()]
         return super().get_throttles()
 
+    @extend_schema(summary='List streams', tags=['streams'],
+                   description="Returns all streams belonging to the authenticated user's workspaces.")
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @extend_schema(summary='Create stream', tags=['streams'])
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         workspace = serializer.validated_data.get('workspace')
         get_object_or_404(self.get_accessible_workspaces(), pk=workspace.pk)
@@ -84,6 +98,13 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
                   metadata={'stream_name': instance.name}, ip_address=get_client_ip(self.request))
         instance.delete()
 
+    @extend_schema(
+        summary='Trigger LSTM training',
+        description='Dispatches an async Celery task to train the LSTM detector for this stream.',
+        tags=['streams'],
+        request=None,
+        responses={202: {'type': 'object', 'properties': {'task_id': {'type': 'string'}}}},
+    )
     @action(detail=True, methods=['post'], url_path='train-lstm')
     def train_lstm(self, request, *args, **kwargs):
         """Queue LSTM training for the stream and return the task id."""
@@ -116,6 +137,20 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
             'result': result.result if result.state == 'SUCCESS' else None,
         })
 
+    @extend_schema(
+        summary='Compare two detectors',
+        tags=['streams'],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'a': {'type': 'string', 'enum': ['ZSCORE', 'IQR', 'LSTM']},
+                    'b': {'type': 'string', 'enum': ['ZSCORE', 'IQR', 'LSTM']},
+                },
+            }
+        },
+        responses={200: {'type': 'object'}},
+    )
     @action(detail=True, methods=['post'], url_path='compare-detectors')
     def compare_detectors(self, request, *args, **kwargs):
         """Replay stored data through two detectors and report their agreement."""
@@ -261,6 +296,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(status=status.upper())
         return queryset
 
+    @extend_schema(summary='Acknowledge alert', tags=['alerts'], request=None, responses=AlertSerializer)
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def acknowledge(self, request, *args, **kwargs):
         alert = self.get_object()
@@ -271,6 +307,24 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         log_event(actor=request.user, workspace=alert.stream.workspace, action='ALERT_ACKNOWLEDGED',
                   stream=alert.stream, metadata={'alert_id': alert.id}, ip_address=get_client_ip(request))
         return Response(AlertSerializer(alert).data)
+
+    @extend_schema(
+        summary='Resolve alert',
+        tags=['alerts'],
+        request=None,
+        responses={200: {'type': 'object', 'properties': {'status': {'type': 'string'}}}},
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def resolve(self, request, *args, **kwargs):
+        alert = self.get_object()
+        if alert.status == Alert.STATUS_RESOLVED:
+            return Response({'detail': 'Alert is already resolved.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        alert.status = Alert.STATUS_RESOLVED
+        alert.save(update_fields=['status'])
+        log_event(actor=request.user, workspace=alert.stream.workspace, action='ALERT_RESOLVED',
+                  stream=alert.stream, metadata={'alert_id': alert.id}, ip_address=get_client_ip(request))
+        return Response({'status': alert.status})
 
 
 class WebhookEndpointViewSet(viewsets.ModelViewSet):
@@ -290,6 +344,10 @@ class WebhookEndpointViewSet(viewsets.ModelViewSet):
         log_event(actor=self.request.user, workspace=instance.workspace, action='WEBHOOK_DELETED',
                   metadata={'webhook_id': instance.pk}, ip_address=get_client_ip(self.request))
         instance.delete()
+
+
+WORKSPACE_PARAM = OpenApiParameter('workspace_pk', int, OpenApiParameter.PATH)
+PK_PARAM = OpenApiParameter('id', int, OpenApiParameter.PATH)
 
 
 class WorkspaceAdminMixin(WorkspaceScopedMixin):
@@ -319,6 +377,16 @@ def _member_lookup(workspace, pk):
     return UserWorkspace.objects.select_related('user').filter(workspace=workspace, user_id=pk).first()
 
 
+@extend_schema_view(
+    list=extend_schema(summary='List members', tags=['workspaces'], parameters=[WORKSPACE_PARAM],
+                       responses=MemberSerializer(many=True)),
+    partial_update=extend_schema(
+        summary='Change a member role', tags=['workspaces'], parameters=[WORKSPACE_PARAM, PK_PARAM],
+        request={'application/json': {'type': 'object', 'properties': {'role': {'type': 'string'}}}},
+        responses=MemberSerializer),
+    destroy=extend_schema(summary='Remove a member', tags=['workspaces'],
+                          parameters=[WORKSPACE_PARAM, PK_PARAM], responses={204: None}),
+)
 class WorkspaceMemberViewSet(WorkspaceAdminMixin, viewsets.ViewSet):
     """List members of a workspace; owners may change roles and remove members."""
 
@@ -376,6 +444,14 @@ class WorkspaceMemberViewSet(WorkspaceAdminMixin, viewsets.ViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema_view(
+    list=extend_schema(summary='List pending invites', tags=['workspaces'], parameters=[WORKSPACE_PARAM],
+                       responses=WorkspaceInviteSerializer(many=True)),
+    create=extend_schema(summary='Invite a member', tags=['workspaces'], parameters=[WORKSPACE_PARAM],
+                         request=WorkspaceInviteSerializer, responses={201: WorkspaceInviteSerializer}),
+    destroy=extend_schema(summary='Revoke an invite', tags=['workspaces'],
+                          parameters=[WORKSPACE_PARAM, PK_PARAM], responses={204: None}),
+)
 class WorkspaceInviteViewSet(WorkspaceAdminMixin, viewsets.ViewSet):
     """List, create and revoke pending invites. Owner access only."""
 
@@ -424,6 +500,16 @@ class AcceptInviteView(APIView):
 
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='Accept an invite',
+        tags=['auth'],
+        request=None,
+        responses={200: {'type': 'object', 'properties': {
+            'workspace_id': {'type': 'integer'},
+            'workspace_slug': {'type': 'string'},
+            'role': {'type': 'string'},
+        }}},
+    )
     def post(self, request, token):
         try:
             membership = accept_invite(token=token, user=request.user)
@@ -436,12 +522,61 @@ class AcceptInviteView(APIView):
         })
 
 
+class RetrieveInviteView(APIView):
+    """Public invite metadata for the frontend accept page.
+
+    The token is the credential; workspace name and role are safe to show
+    before sign-in.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    @extend_schema(
+        summary='Get invite details',
+        tags=['auth'],
+        responses={200: {'type': 'object', 'properties': {
+            'workspace_name': {'type': 'string'},
+            'workspace_slug': {'type': 'string'},
+            'role': {'type': 'string'},
+            'invited_by': {'type': 'string', 'nullable': True},
+            'expires_at': {'type': 'string', 'format': 'date-time'},
+        }}},
+    )
+    def get(self, request, token):
+        try:
+            invite = WorkspaceInvite.objects.select_related('workspace', 'invited_by').get(
+                token=token, status=WorkspaceInvite.STATUS_PENDING,
+            )
+        except WorkspaceInvite.DoesNotExist:
+            return Response({'detail': 'Invalid or already-used invite.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if invite.is_expired:
+            invite.status = WorkspaceInvite.STATUS_EXPIRED
+            invite.save(update_fields=['status'])
+            return Response({'detail': 'This invite has expired.'}, status=status.HTTP_410_GONE)
+
+        return Response({
+            'workspace_name': invite.workspace.name,
+            'workspace_slug': invite.workspace.slug,
+            'role': invite.role,
+            'invited_by': invite.invited_by.username if invite.invited_by else None,
+            'expires_at': invite.expires_at.isoformat(),
+        })
+
+
+@extend_schema_view(
+    list=extend_schema(summary='List audit events', tags=['audit'], parameters=[WORKSPACE_PARAM]),
+    retrieve=extend_schema(summary='Get an audit event', tags=['audit'],
+                           parameters=[WORKSPACE_PARAM, PK_PARAM]),
+)
 class WorkspaceAuditViewSet(WorkspaceAdminMixin, viewsets.ReadOnlyModelViewSet):
     """Read-only audit log, owner access only; filter with ``?action=``."""
 
     serializer_class = AuditEventSerializer
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return AuditEvent.objects.none()
         workspace = self._get_workspace(self.kwargs['workspace_pk'])
         self._require_owner(workspace, self.request.user, 'Audit log is visible to workspace owners only.')
         queryset = AuditEvent.objects.filter(workspace=workspace).select_related('actor', 'target_user', 'stream')
@@ -449,3 +584,62 @@ class WorkspaceAuditViewSet(WorkspaceAdminMixin, viewsets.ReadOnlyModelViewSet):
         if action_filter:
             queryset = queryset.filter(action=action_filter)
         return queryset
+
+
+class IntegrationViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    """One integration per workspace; the secret field is write-only."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'delete']
+    model = None
+    channel = ''
+
+    def get_queryset(self):
+        queryset = self.model.objects.filter(workspace_id__in=self.get_user_workspace_ids())
+        workspace = self.request.query_params.get('workspace')
+        if workspace and workspace.isdigit():
+            queryset = queryset.filter(workspace_id=workspace)
+        return queryset
+
+    def perform_create(self, serializer):
+        workspace = serializer.validated_data['workspace']
+        get_object_or_404(self.get_accessible_workspaces(), pk=workspace.pk)
+        serializer.save()
+        log_event(actor=self.request.user, workspace=workspace, action='WEBHOOK_CREATED',
+                  metadata={'channel': self.channel}, ip_address=get_client_ip(self.request))
+
+    def perform_update(self, serializer):
+        # An integration cannot be moved to another workspace.
+        serializer.validated_data.pop('workspace', None)
+        serializer.save()
+
+
+@extend_schema(tags=['integrations'])
+class SlackIntegrationViewSet(IntegrationViewSet):
+    """One Slack integration per workspace. Webhook URL is write-only."""
+
+    serializer_class = SlackIntegrationSerializer
+    model = SlackIntegration
+    channel = 'SLACK'
+
+
+@extend_schema(tags=['integrations'])
+class PagerDutyIntegrationViewSet(IntegrationViewSet):
+    """One PagerDuty integration per workspace. Routing key is write-only."""
+
+    serializer_class = PagerDutyIntegrationSerializer
+    model = PagerDutyIntegration
+    channel = 'PAGERDUTY'
+
+
+@extend_schema(tags=['integrations'])
+class NotificationLogViewSet(WorkspaceScopedMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only log of outbound Slack and PagerDuty notifications."""
+
+    serializer_class = NotificationLogSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return NotificationLog.objects.filter(
+            alert__stream__workspace_id__in=self.get_user_workspace_ids()
+        ).select_related('alert__stream')

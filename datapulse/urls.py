@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.urls import include, path
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 
 from accounts.views import LogoutView, MeView, RegisterView
@@ -15,6 +16,9 @@ urlpatterns = [
     path('api/auth/token/verify/', TokenVerifyView.as_view(), name='token-verify'),
     path('api/auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('api/auth/me/', MeView.as_view(), name='auth-me'),
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     path('health/', health, name='health'),
     path('readiness/', readiness, name='readiness'),
     path('metrics/', metrics_view, name='metrics'),

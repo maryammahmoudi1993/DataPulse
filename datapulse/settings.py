@@ -215,6 +215,7 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
+    'ENUM_NAME_OVERRIDES': {'SeverityEnum': 'alerts.models.Alert.SEVERITY_CHOICES'},
     'TAGS': [
         {'name': 'auth', 'description': 'JWT authentication'},
         {'name': 'streams', 'description': 'Stream management'},
