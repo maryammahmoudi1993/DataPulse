@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from streams.models import Workspace
@@ -55,6 +56,12 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'workspaces']
 
+    @extend_schema_field({
+        'type': 'array',
+        'items': {'type': 'object', 'properties': {
+            'id': {'type': 'integer'}, 'slug': {'type': 'string'}, 'role': {'type': 'string'},
+        }},
+    })
     def get_workspaces(self, obj):
         memberships = obj.workspace_memberships.select_related('workspace')
         return [

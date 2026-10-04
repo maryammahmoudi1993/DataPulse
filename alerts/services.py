@@ -64,4 +64,12 @@ def create_alert(stream, point, result):
 
     from alerts.tasks import dispatch_webhooks
     dispatch_webhooks.delay(alert.id)
+
+    from integrations.tasks import dispatch_pagerduty_incident, dispatch_slack_notification
+    for task in (dispatch_slack_notification, dispatch_pagerduty_incident):
+        try:
+            task.delay(alert.id)
+        except Exception:
+            # A failing notification channel must never block alert creation.
+            logger.exception('Notification dispatch failed', extra={'alert_id': alert.id, 'task': task.name})
     return alert

@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,6 +11,7 @@ from accounts.serializers import RegisterSerializer, UserSerializer
 User = get_user_model()
 
 
+@extend_schema(tags=['auth'], summary='Register', responses={201: {'type': 'object'}})
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.none()
     serializer_class = RegisterSerializer
@@ -30,6 +32,7 @@ class RegisterView(generics.CreateAPIView):
 class MeView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(summary='Current user', tags=['auth'], responses=UserSerializer)
     def get(self, request):
         return Response(UserSerializer(request.user).data)
 
@@ -37,6 +40,12 @@ class MeView(APIView):
 class LogoutView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(
+        summary='Sign out',
+        tags=['auth'],
+        request={'application/json': {'type': 'object', 'properties': {'refresh': {'type': 'string'}}}},
+        responses={204: None},
+    )
     def post(self, request):
         """Blacklist the supplied refresh token; invalid tokens are ignored."""
         try:

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { MembersPanel } from './MembersPanel'
 import { InvitePanel } from './InvitePanel'
 import { AuditPanel } from './AuditPanel'
+import { IntegrationsPanel } from './IntegrationsPanel'
 
 interface Props {
   workspaceId: number
@@ -9,12 +10,13 @@ interface Props {
   onClose: () => void
 }
 
-type Tab = 'members' | 'invites' | 'audit'
+type Tab = 'members' | 'invites' | 'audit' | 'integrations'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'members', label: 'Members' },
   { key: 'invites', label: 'Invites' },
   { key: 'audit', label: 'Audit log' },
+  { key: 'integrations', label: 'Integrations' },
 ]
 
 export function WorkspaceSettings({ workspaceId, currentUserId, onClose }: Props) {
@@ -51,6 +53,7 @@ export function WorkspaceSettings({ workspaceId, currentUserId, onClose }: Props
           )}
           {tab === 'invites' && <InvitePanel workspaceId={workspaceId} />}
           {tab === 'audit' && <AuditPanel workspaceId={workspaceId} />}
+          {tab === 'integrations' && <IntegrationsPanel workspaceId={workspaceId} />}
         </div>
       </div>
     </div>

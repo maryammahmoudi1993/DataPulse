@@ -3,6 +3,7 @@ from rest_framework import serializers
 from alerts.models import Alert, WebhookEndpoint
 from audit.models import AuditEvent
 from ingestion.models import DataPoint
+from integrations.models import NotificationLog, PagerDutyIntegration, SlackIntegration
 from streams.models import Stream, Workspace
 
 
@@ -77,3 +78,35 @@ class AuditEventSerializer(serializers.ModelSerializer):
             'id', 'action', 'actor_username', 'target_username',
             'stream_name', 'metadata', 'ip_address', 'created_at',
         ]
+
+
+class _IntegrationSerializer(serializers.ModelSerializer):
+    """Shared validation for notification-channel integrations."""
+
+    def validate_min_severity(self, value):
+        if value not in dict(Alert.SEVERITY_CHOICES):
+            raise serializers.ValidationError(f'Must be one of {list(dict(Alert.SEVERITY_CHOICES))}.')
+        return value
+
+
+class SlackIntegrationSerializer(_IntegrationSerializer):
+    class Meta:
+        model = SlackIntegration
+        fields = ['id', 'workspace', 'webhook_url', 'min_severity', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']
+        extra_kwargs = {'webhook_url': {'write_only': True}}
+
+
+class PagerDutyIntegrationSerializer(_IntegrationSerializer):
+    class Meta:
+        model = PagerDutyIntegration
+        fields = ['id', 'workspace', 'routing_key', 'min_severity', 'is_active', 'created_at']
+        read_only_fields = ['id', 'created_at']
+        extra_kwargs = {'routing_key': {'write_only': True}}
+
+
+class NotificationLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationLog
+        fields = ['id', 'alert', 'channel', 'status', 'response_code', 'error', 'created_at']
+        read_only_fields = fields

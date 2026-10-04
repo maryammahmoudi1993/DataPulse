@@ -9,10 +9,11 @@ import { ExportButton } from './components/ExportButton'
 import { LoginPage } from './components/LoginPage'
 import { CreateStreamModal } from './components/CreateStreamModal'
 import { WorkspaceSettings } from './components/WorkspaceSettings'
+import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { api, clearSession } from './api'
 import type { StreamInfo } from './types'
 
-export default function App() {
+function Dashboard() {
   const [authed, setAuthed] = useState(!!localStorage.getItem('access'))
   const [showCreate, setShowCreate] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -159,4 +160,13 @@ export default function App() {
       )}
     </div>
   )
+}
+
+export default function App() {
+  const { pathname } = window.location
+  if (pathname.startsWith('/invite/')) {
+    const token = pathname.replace(/^\/invite\//, '').replace(/\/$/, '')
+    return <InviteAcceptPage token={token} />
+  }
+  return <Dashboard />
 }

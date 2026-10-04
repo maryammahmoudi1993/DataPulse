@@ -22,3 +22,4 @@ psycopg2-binary==2.9.*
 djangorestframework-simplejwt==5.3.*
 django-celery-results==2.5.*
 prometheus-client==0.20.*
+drf-spectacular==0.27.*

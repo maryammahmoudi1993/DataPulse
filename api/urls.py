@@ -6,6 +6,10 @@ from api.views import (
     AcceptInviteView,
     AlertViewSet,
     DataPointViewSet,
+    NotificationLogViewSet,
+    PagerDutyIntegrationViewSet,
+    RetrieveInviteView,
+    SlackIntegrationViewSet,
     StreamViewSet,
     WebhookEndpointViewSet,
     WorkspaceAuditViewSet,
@@ -18,6 +22,9 @@ router = DefaultRouter()
 router.register('workspaces', WorkspaceViewSet, basename='workspace')
 router.register('streams', StreamViewSet, basename='stream')
 router.register('webhooks', WebhookEndpointViewSet, basename='webhook')
+router.register('integrations/slack', SlackIntegrationViewSet, basename='slack-integration')
+router.register('integrations/pagerduty', PagerDutyIntegrationViewSet, basename='pagerduty-integration')
+router.register('integrations/notifications', NotificationLogViewSet, basename='notification-log')
 
 streams_router = NestedDefaultRouter(router, 'streams', lookup='stream')
 streams_router.register('datapoints', DataPointViewSet, basename='stream-datapoints')
@@ -29,5 +36,6 @@ workspaces_router.register('invites', WorkspaceInviteViewSet, basename='workspac
 workspaces_router.register('audit', WorkspaceAuditViewSet, basename='workspace-audit')
 
 urlpatterns = router.urls + streams_router.urls + workspaces_router.urls + [
+    path('invites/<str:token>/', RetrieveInviteView.as_view(), name='invite-detail'),
     path('invites/<str:token>/accept/', AcceptInviteView.as_view(), name='invite-accept'),
 ]
