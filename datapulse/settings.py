@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     'exports',
     'reports',
     'audit',
+    'drf_spectacular',
+    'integrations',
 ]
 
 MIDDLEWARE = [
@@ -124,6 +126,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.UserRateThrottle',
@@ -204,7 +207,23 @@ SMTP_FROM = env('SMTP_FROM', default='noreply@datapulse.local')
 
 # Workspace invites
 INVITE_TOKEN_TTL_DAYS = env.int('INVITE_TOKEN_TTL_DAYS', default=7)
-INVITE_BASE_URL = env('INVITE_BASE_URL', default='http://localhost:8000')
+INVITE_BASE_URL = env('INVITE_BASE_URL', default='http://localhost:3000')
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'DataPulse API',
+    'DESCRIPTION': 'Real-time anomaly detection and alerting platform.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'TAGS': [
+        {'name': 'auth', 'description': 'JWT authentication'},
+        {'name': 'streams', 'description': 'Stream management'},
+        {'name': 'alerts', 'description': 'Anomaly alerts'},
+        {'name': 'integrations', 'description': 'Slack and PagerDuty'},
+        {'name': 'audit', 'description': 'Audit log'},
+        {'name': 'exports', 'description': 'CSV data exports'},
+    ],
+}
 
 DEMO_WORKSPACE_SLUG = 'demo'
 DEMO_PUBLIC_ACCESS = env.bool('DEMO_PUBLIC_ACCESS', default=False)
@@ -229,7 +248,7 @@ LOGGING = {
     },
     'loggers': {
         name: {'handlers': ['console'], 'level': 'INFO', 'propagate': False}
-        for name in ('datapulse', 'ingestion', 'detection', 'alerts', 'api', 'accounts', 'exports', 'reports')
+        for name in ('datapulse', 'ingestion', 'detection', 'alerts', 'api', 'accounts', 'exports', 'reports', 'integrations')
     },
     'root': {'handlers': ['console'], 'level': 'WARNING'},
 }
