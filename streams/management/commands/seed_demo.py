@@ -1,9 +1,11 @@
 import datetime
 
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from accounts.models import UserWorkspace
 from ingestion.models import DataPoint
 from sources.adapters.simulator import SimulatorAdapter
 from streams.models import Stream, Workspace
@@ -51,6 +53,22 @@ class Command(BaseCommand):
         )
         if created:
             self.stdout.write(f'Stream created: {stream}')
+
+        demo_user, user_created = User.objects.get_or_create(
+            username='demo',
+            defaults={'email': 'demo@datapulse.local'},
+        )
+        if user_created or options['flush']:
+            demo_user.set_password('demodemo1')
+            demo_user.save()
+
+        UserWorkspace.objects.get_or_create(
+            user=demo_user,
+            workspace=workspace,
+            defaults={'role': UserWorkspace.ROLE_OWNER},
+        )
+        if user_created:
+            self.stdout.write('Demo user created: username=demo password=demodemo1')
 
         adapter = SimulatorAdapter(stream)
         count = options['points']
