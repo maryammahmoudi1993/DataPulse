@@ -1,37 +1,119 @@
 # DataPulse
 
-Real-time anomaly detection pipeline for time-series streams.
-Detects statistical outliers and pattern deviations, pushes live
-alerts to connected dashboards via WebSocket.
+Real-time anomaly detection and alerting platform for time-series data.
+Monitors IoT sensors, server metrics, and financial signals.
+Detects statistical and ML-based outliers and pushes live alerts
+to connected dashboards via WebSocket.
+
+---
+
+## Live demo
+
+| Resource | URL |
+|---|---|
+| Dashboard | https://datapulse-frontend.onrender.com |
+| API docs  | https://datapulse.onrender.com/api/schema/swagger-ui/ |
+
+Sign in with `demo / demodemo1` — a seeded Simulator stream runs continuously.
+
+> The `demo` account and its password are public and exist for demonstration only.
+> Change the password (or delete the user) before any real deployment.
+
+---
+
+## What it does
+
+DataPulse ingests time-series data from any configured source, runs
+it through a pluggable anomaly detection pipeline, and delivers
+real-time alerts to a live dashboard and external channels.
+
+**Detection methods:**
+- Z-Score — rolling mean / standard deviation baseline
+- IQR — interquartile range outlier fences
+- LSTM — PyTorch next-step predictor; anomaly score = reconstruction error
+- Ensemble — weighted majority vote across all three
+
+**Alerting:**
+- Deduplication window (configurable, default 5 min)
+- Severity classification: LOW / MEDIUM / HIGH / CRITICAL
+- Webhook dispatch with per-endpoint severity filtering
+- Slack Block Kit notifications
+- PagerDuty Events API v2 incident trigger
+- Daily digest email to workspace owners
+
+**Workspace model:**
+- Multi-tenant from the start: every resource belongs to a workspace
+- Roles: OWNER / MEMBER / VIEWER
+- Token-based email invitations (7-day expiry)
+- Full audit log (owner-only access)
+
+---
 
 ## Architecture
 
-- **Ingestion** — Celery Beat polls configured sources every 5 s
-- **Detection** — pluggable detectors: Z-score, IQR, LSTM (PyTorch)
-- **Alerts**    — deduplication window, severity routing, webhook dispatch
-- **Real-time** — Django Channels + Redis pub/sub → WebSocket push
-- **Frontend**  — React + Recharts, live chart and alert feed
+```
+Data sources (Simulator / CSV / HTTP)
+        │
+        ▼  Celery Beat — every 5 s
+Ingestion pipeline
+        │
+        ▼  dispatched per stream
+Detection pipeline ──► Z-Score
+                  ├──► IQR
+                  ├──► LSTM (PyTorch)
+                  └──► Ensemble
+        │ anomaly detected
+        ▼
+Alert engine ──► dedup ──► severity
+        │
+        ├──► PostgreSQL (persist)
+        ├──► Redis pub/sub
+        │         │
+        │         ▼
+        │    Django Channels
+        │    WebSocket push ──► React dashboard
+        │
+        ├──► Webhook endpoints
+        ├──► Slack
+        └──► PagerDuty
+```
 
 ## Stack
 
-Python 3.11 · Django 4.2 · Django Channels 4 · Celery 5 · Redis 7
-PostgreSQL 16 · PyTorch 2 · scikit-learn · React 18 · Recharts · Vite
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.11, Django 4.2, Django REST Framework |
+| Async / WS | Django Channels 4, Daphne, ASGI |
+| Task queue | Celery 5, Celery Beat, Redis 7 |
+| ML / detection | PyTorch 2.2, scikit-learn, NumPy |
+| Database | PostgreSQL 16 |
+| Auth | JWT (djangorestframework-simplejwt) |
+| API docs | drf-spectacular (OpenAPI 3, Swagger UI, ReDoc) |
+| Observability | Prometheus client, structured JSON logs |
+| Frontend | React 18, TypeScript, Recharts, Vite, Tailwind CSS |
+| Container | Docker, Docker Compose |
 
-## Quick start (Docker)
+---
+
+## Quick start
+
+### Docker (recommended)
 
 ```bash
+git clone https://github.com/maryammahmoudi1993/DataPulse.git
+cd DataPulse
+cp .env.docker .env
 docker compose up --build
 ```
 
-Open `http://localhost:3000` — the dashboard starts with a seeded demo stream.
-The Django API is served on `http://localhost:8000`.
+Open http://localhost:3000 and sign in with `demo / demodemo1`.
 
-## Local development
+### Local development
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env       # fill in DATABASE_URL and REDIS_URL
+cp .env.example .env   # fill in DATABASE_URL and REDIS_URL
 python manage.py migrate
 python manage.py seed_demo
 daphne datapulse.asgi:application &
@@ -40,35 +122,92 @@ celery -A datapulse beat   -l info &
 cd frontend && npm install && npm run dev
 ```
 
-Set `CELERY_TASK_ALWAYS_EAGER=False` when running a separate worker; by
-default tasks run inline, which suits tests and quick experiments.
+### Deployment
+
+Manifests for Render (`render.yaml`), Fly.io (`fly.toml`) and Procfile-based
+platforms (`Procfile`) are included. Production settings live in
+`datapulse/settings_prod.py` and read every secret from the environment.
+`seed_demo` runs on each release so the demo user and stream always exist —
+remove it from the build/release command for a real deployment.
+
+---
 
 ## API
 
-| Endpoint | Description |
-|---|---|
-| `GET/POST /api/streams/` | List and create streams |
-| `GET /api/streams/{id}/datapoints/?limit=N` | Latest data points |
-| `GET /api/streams/{id}/alerts/?severity=HIGH&status=OPEN` | Filtered alerts |
-| `POST /api/streams/{id}/alerts/{alert_id}/acknowledge/` | Acknowledge an alert |
-| `GET/POST /api/webhooks/` | Manage webhook endpoints |
-| `WS /ws/streams/{id}/` | Live `datapoint` and `alert` events |
-| `POST /api/auth/register/` | Create a user and its workspace; returns JWT pair |
-| `POST /api/auth/token/`, `/token/refresh/`, `/logout/` | Log in, renew, blacklist refresh token |
-| `GET /api/auth/me/` | Current user and workspace roles |
-| `POST /api/streams/{id}/train-lstm/` | Queue LSTM training (202 + `task_id`) |
-| `GET /api/streams/{id}/training-status/?task_id=` | Poll training progress |
-| `POST /api/streams/{id}/compare-detectors/` | Agreement stats for two detectors (`{"a": "ZSCORE", "b": "IQR"}`) |
-| `GET /health/`, `GET /readiness/` | Liveness and DB/Redis readiness |
+Interactive docs: http://localhost:8000/api/schema/swagger-ui/
 
-API calls send `Authorization: Bearer <access>`. WebSocket clients pass the
-token as subprotocol `['jwt', <access>]` so it never appears in a URL.
+Key endpoints:
 
-Webhook payloads are signed with HMAC-SHA256 in the `X-DataPulse-Signature`
-header when the endpoint has a secret.
+```
+POST   /api/auth/register/             Register + create workspace
+POST   /api/auth/token/                Obtain JWT pair
+POST   /api/auth/token/refresh/        Refresh access token
+GET    /api/auth/me/                   Current user + workspaces
 
-Setting `DEMO_PUBLIC_ACCESS=True` lets anonymous visitors read (and PATCH)
-the `demo` workspace only. It is off by default and enabled in `.env.docker`.
+GET    /api/streams/                   List streams
+POST   /api/streams/                   Create stream
+PATCH  /api/streams/{id}/              Update config, detector, retention
+POST   /api/streams/{id}/pause/        Pause polling
+POST   /api/streams/{id}/resume/       Resume polling
+POST   /api/streams/{id}/train-lstm/   Trigger async LSTM training
+POST   /api/streams/{id}/compare-detectors/  Compare two detector types
+POST   /api/streams/{id}/export/       Request CSV export
+
+GET    /api/streams/{id}/alerts/       List alerts (filter: severity, status)
+POST   /api/streams/{id}/alerts/{id}/acknowledge/
+POST   /api/streams/{id}/alerts/{id}/resolve/
+
+GET    /api/workspaces/{id}/members/   List members
+PATCH  /api/workspaces/{id}/members/{user_id}/  Change role
+DELETE /api/workspaces/{id}/members/{user_id}/  Remove member
+GET    /api/workspaces/{id}/invites/   List pending invites
+POST   /api/workspaces/{id}/invites/   Send invite email
+GET    /api/workspaces/{id}/audit/     Audit log (owner-only)
+
+POST   /api/integrations/slack/        Configure Slack
+POST   /api/integrations/pagerduty/    Configure PagerDuty
+
+WS     /ws/streams/{id}/               Live feed — datapoints + alerts
+
+GET    /health/                        Liveness
+GET    /readiness/                     Readiness (DB + Redis)
+GET    /metrics/                       Prometheus metrics
+```
+
+## Detector configuration
+
+Each Stream stores `detector_config` as JSON:
+
+| Type | Key params | Notes |
+|---|---|---|
+| `ZSCORE` | `window` (60), `threshold` (3.0) | Fastest; good for stable signals |
+| `IQR` | `window` (100), `multiplier` (1.5) | Robust to non-normal distributions |
+| `LSTM` | `seq_len` (30), `threshold` (2.0) | Needs ≥200 points; train via API |
+| `ENSEMBLE` | `members` list with weights | Majority vote across sub-detectors |
+
+Train the LSTM:
+
+```bash
+curl -X POST http://localhost:8000/api/streams/1/train-lstm/ \
+     -H "Authorization: Bearer <token>"
+# Returns {"task_id": "..."} — poll /api/streams/1/training-status/?task_id=...
+```
+
+## Workspace model
+
+```
+Workspace
+├── Streams (1–N)
+│   ├── DataPoints (ingested per interval)
+│   ├── Alerts (anomaly events)
+│   ├── ExportJobs
+│   └── WebhookEndpoints
+├── Members (UserWorkspace: OWNER / MEMBER / VIEWER)
+├── Invites (token-based, 7-day expiry)
+├── AuditEvents
+├── SlackIntegration (one per workspace)
+└── PagerDutyIntegration (one per workspace)
+```
 
 ## Tests
 
@@ -76,19 +215,23 @@ the `demo` workspace only. It is off by default and enabled in `.env.docker`.
 pytest --cov=. --cov-report=term-missing -v
 ```
 
-## Detector configuration
+230+ tests · flake8 clean · OpenAPI schema validated in CI.
 
-Each `Stream` stores `detector_config` as JSON:
+## Project structure
 
-| Detector | Key params |
-|---|---|
-| `ZSCORE` | `window` (default 60), `threshold` (default 3.0) |
-| `IQR`    | `window` (default 100), `multiplier` (default 1.5) |
-| `LSTM`   | `seq_len` (default 30), `threshold` (default 2.0), `model_path` |
-
-To train the LSTM for a stream:
-
-```python
-from detection.tasks import train_lstm_for_stream
-train_lstm_for_stream.delay(stream_id=1)
+```
+datapulse/           Django project root (settings, ASGI, Celery)
+streams/             Stream and Workspace models, seed_demo command
+ingestion/           DataPoint model, Celery polling and cleanup tasks
+detection/           BaseDetector, ZScore, IQR, LSTM, Ensemble, factory, comparison
+alerts/              Alert model, dedup engine, webhook dispatch
+realtime/            Django Channels consumers, Redis publisher
+accounts/            User auth, JWT, UserWorkspace, WorkspaceInvite
+audit/               AuditEvent model, log_event service
+exports/             CSV export jobs and cleanup
+reports/             Daily alert digest email
+integrations/        Slack and PagerDuty models, notification tasks
+api/                 DRF views, serializers, pagination, throttles, health endpoints
+frontend/            React 18 + TypeScript dashboard
+screenshots/         Playwright screenshot automation
 ```

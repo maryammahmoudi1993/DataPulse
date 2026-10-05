@@ -1,0 +1,102 @@
+services:
+  - type: web
+    name: datapulse-web
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt &&
+      python manage.py collectstatic --noinput &&
+      python manage.py migrate --noinput &&
+      python manage.py seed_demo
+    startCommand: daphne datapulse.asgi:application -b 0.0.0.0 -p $PORT
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: datapulse.settings_prod
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: datapulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: datapulse-redis
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        value: datapulse.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://datapulse-frontend.onrender.com
+      - key: INVITE_BASE_URL
+        value: https://datapulse-frontend.onrender.com
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: DEBUG
+        value: "False"
+    healthCheckPath: /health/
+
+  - type: worker
+    name: datapulse-worker
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A datapulse worker -l info -c 2
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: datapulse.settings_prod
+      - key: SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: datapulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: datapulse-redis
+          property: connectionString
+
+  - type: worker
+    name: datapulse-beat
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      celery -A datapulse beat -l info
+      --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: datapulse.settings_prod
+      - key: SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: datapulse-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: datapulse-redis
+          property: connectionString
+
+  - type: redis
+    name: datapulse-redis
+    plan: free
+    ipAllowList: []
+
+  - type: web
+    name: datapulse-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+databases:
+  - name: datapulse-db
+    plan: free

@@ -1,0 +1,11 @@
+{
+  "name": "datapulse-screenshots",
+  "private": true,
+  "scripts": {
+    "capture": "node capture.js",
+    "capture:prod": "BASE_URL=$DEMO_URL API_URL=$API_URL node capture.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.46.0"
+  }
+}

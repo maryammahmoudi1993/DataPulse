@@ -1,0 +1,30 @@
+app            = "datapulse"
+primary_region = "sin"   # Singapore — closest to Taiwan
+
+[build]
+
+[env]
+  DJANGO_SETTINGS_MODULE = "datapulse.settings_prod"
+  PORT                   = "8080"
+
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = true
+  auto_start_machines  = true
+  min_machines_running = 0
+  processes            = ["web"]
+
+  [http_service.concurrency]
+    type       = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  memory = "512mb"
+  cpus   = 1
+
+[processes]
+  web    = "daphne datapulse.asgi:application -b 0.0.0.0 -p 8080"
+  worker = "celery -A datapulse worker -l info -c 2"
+  beat   = "celery -A datapulse beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
