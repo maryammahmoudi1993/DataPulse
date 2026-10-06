@@ -2,6 +2,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+import sentry_sdk
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.redis import RedisIntegration
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -253,3 +257,39 @@ LOGGING = {
     },
     'root': {'handlers': ['console'], 'level': 'WARNING'},
 }
+
+
+# Sentry
+SENTRY_DSN = env('SENTRY_DSN', default='')
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(transaction_style='url'),
+            CeleryIntegration(monitor_beat_tasks=True),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=env.float('SENTRY_TRACES_SAMPLE_RATE', default=0.1),
+        send_default_pii=False,  # never send user PII to Sentry
+        environment=env('ENVIRONMENT', default='development'),
+    )
+
+# Redis cache
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'SOCKET_CONNECT_TIMEOUT': 2,
+            'SOCKET_TIMEOUT': 2,
+            'IGNORE_EXCEPTIONS': True,  # cache miss on Redis error: never break a request
+        },
+        'TIMEOUT': 300,  # 5 minutes default
+    }
+}
+
+STREAM_LIST_CACHE_TTL = env.int('STREAM_LIST_CACHE_TTL', default=60)  # seconds
+ALERT_LIST_CACHE_TTL = env.int('ALERT_LIST_CACHE_TTL', default=30)
+STREAM_STATS_CACHE_TTL = env.int('STREAM_STATS_CACHE_TTL', default=120)
