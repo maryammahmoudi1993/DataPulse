@@ -5,6 +5,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from alerts.models import Alert
+from api.cache_keys import invalidate_alert_cache
 from datapulse.metrics import alerts_created
 from realtime.publisher import publish_stream_event
 
@@ -46,6 +47,7 @@ def create_alert(stream, point, result):
     )
 
     alerts_created.labels(severity=alert.severity).inc()
+    invalidate_alert_cache(stream.id)
 
     logger.info('Alert created', extra={
         'stream_id': stream.id,

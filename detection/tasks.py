@@ -4,6 +4,7 @@ import os
 from celery import shared_task
 from django.conf import settings
 
+from api.cache_keys import invalidate_workspace_stream_cache
 from streams.models import Stream
 
 from detection.detectors.lstm import train_model
@@ -51,6 +52,7 @@ def train_lstm_for_stream(self, stream_id, epochs=20):
 
     stream.detector_config = {**stream.detector_config, 'model_path': model_path}
     stream.save(update_fields=['detector_config', 'updated_at'])
+    invalidate_workspace_stream_cache(stream.workspace)
     logger.info('LSTM training complete', extra={'stream_id': stream.id, 'task': self.name})
     return {'status': 'ok', 'path': model_path, 'samples': stats['samples']}
 
