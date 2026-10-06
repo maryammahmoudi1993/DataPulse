@@ -1,6 +1,7 @@
 import os
 
 from django.conf import settings
+from django.core.cache import cache
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -18,6 +19,13 @@ from accounts.serializers import MemberSerializer, WorkspaceInviteSerializer
 from alerts.models import Alert, WebhookEndpoint
 from streams.models import Stream, Workspace
 
+from api.cache_keys import (
+    alert_list_key,
+    invalidate_alert_cache,
+    invalidate_stream_cache,
+    invalidate_workspace_stream_cache,
+    stream_list_key,
+)
 from api.mixins import WorkspaceScopedMixin
 from api.pagination import TimestampCursorPagination
 from api.serializers import (
@@ -70,7 +78,11 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticatedOrPublicDemo]
 
     def get_queryset(self):
-        return Stream.objects.filter(workspace_id__in=self.get_user_workspace_ids())
+        return (
+            Stream.objects
+            .filter(workspace_id__in=self.get_user_workspace_ids())
+            .select_related('workspace')
+        )
 
     def get_throttles(self):
         if self.action in ('create', 'update', 'partial_update', 'destroy'):
@@ -80,7 +92,13 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     @extend_schema(summary='List streams', tags=['streams'],
                    description="Returns all streams belonging to the authenticated user's workspaces.")
     def list(self, request, *args, **kwargs):
-        return super().list(request, *args, **kwargs)
+        key = stream_list_key(request.user.id)
+        cached = cache.get(key)
+        if cached is not None:
+            return Response(cached)
+        response = super().list(request, *args, **kwargs)
+        cache.set(key, response.data, timeout=getattr(settings, 'STREAM_LIST_CACHE_TTL', 60))
+        return response
 
     @extend_schema(summary='Create stream', tags=['streams'])
     def create(self, request, *args, **kwargs):
@@ -90,13 +108,21 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         workspace = serializer.validated_data.get('workspace')
         get_object_or_404(self.get_accessible_workspaces(), pk=workspace.pk)
         stream = serializer.save()
+        invalidate_stream_cache(self.request.user.id)
+        invalidate_workspace_stream_cache(stream.workspace)
         log_event(actor=self.request.user, workspace=stream.workspace, action='STREAM_CREATED',
                   stream=stream, ip_address=get_client_ip(self.request))
+
+    def perform_update(self, serializer):
+        stream = serializer.save()
+        invalidate_workspace_stream_cache(stream.workspace)
 
     def perform_destroy(self, instance):
         log_event(actor=self.request.user, workspace=instance.workspace, action='STREAM_DELETED',
                   metadata={'stream_name': instance.name}, ip_address=get_client_ip(self.request))
+        workspace = instance.workspace
         instance.delete()
+        invalidate_workspace_stream_cache(workspace)
 
     @extend_schema(
         summary='Trigger LSTM training',
@@ -237,6 +263,7 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         stream = self.get_object()
         stream.status = Stream.STATUS_PAUSED
         stream.save(update_fields=['status'])
+        invalidate_workspace_stream_cache(stream.workspace)
         log_event(actor=request.user, workspace=stream.workspace, action='STREAM_PAUSED',
                   stream=stream, ip_address=get_client_ip(request))
         return Response(StreamSerializer(stream).data)
@@ -246,6 +273,7 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         stream = self.get_object()
         stream.status = Stream.STATUS_ACTIVE
         stream.save(update_fields=['status'])
+        invalidate_workspace_stream_cache(stream.workspace)
         log_event(actor=request.user, workspace=stream.workspace, action='STREAM_RESUMED',
                   stream=stream, ip_address=get_client_ip(request))
         return Response(StreamSerializer(stream).data)
@@ -287,7 +315,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = Alert.objects.filter(
             stream_id=self.kwargs.get('stream_pk'),
             stream__workspace__in=Workspace.accessible_to(self.request.user),
-        )
+        ).select_related('stream__workspace')
         severity = self.request.query_params.get('severity')
         if severity:
             queryset = queryset.filter(severity=severity.upper())
@@ -295,6 +323,28 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         if status:
             queryset = queryset.filter(status=status.upper())
         return queryset
+
+    def _can_access_stream(self, stream_pk):
+        """True when the stream exists in a workspace the requester may see."""
+        if not str(stream_pk).isdigit():
+            return False
+        return Stream.objects.filter(
+            pk=stream_pk, workspace__in=Workspace.accessible_to(self.request.user),
+        ).exists()
+
+    @extend_schema(summary='List alerts', tags=['alerts'])
+    def list(self, request, *args, **kwargs):
+        stream_pk = self.kwargs.get('stream_pk')
+        # The cache is keyed by stream, so access is checked before it is consulted.
+        if not self._can_access_stream(stream_pk):
+            return super().list(request, *args, **kwargs)
+        key = alert_list_key(stream_pk, request.query_params.get('severity'), request.query_params.get('status'))
+        cached = cache.get(key)
+        if cached is not None:
+            return Response(cached)
+        response = super().list(request, *args, **kwargs)
+        cache.set(key, response.data, timeout=getattr(settings, 'ALERT_LIST_CACHE_TTL', 30))
+        return response
 
     @extend_schema(summary='Acknowledge alert', tags=['alerts'], request=None, responses=AlertSerializer)
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
@@ -304,6 +354,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
         alert.acknowledged_by = request.user
         alert.acknowledged_at = timezone.now()
         alert.save(update_fields=['status', 'acknowledged_by', 'acknowledged_at'])
+        invalidate_alert_cache(alert.stream_id)
         log_event(actor=request.user, workspace=alert.stream.workspace, action='ALERT_ACKNOWLEDGED',
                   stream=alert.stream, metadata={'alert_id': alert.id}, ip_address=get_client_ip(request))
         return Response(AlertSerializer(alert).data)
@@ -322,6 +373,7 @@ class AlertViewSet(viewsets.ReadOnlyModelViewSet):
 
         alert.status = Alert.STATUS_RESOLVED
         alert.save(update_fields=['status'])
+        invalidate_alert_cache(alert.stream_id)
         log_event(actor=request.user, workspace=alert.stream.workspace, action='ALERT_RESOLVED',
                   stream=alert.stream, metadata={'alert_id': alert.id}, ip_address=get_client_ip(request))
         return Response({'status': alert.status})
@@ -438,6 +490,7 @@ class WorkspaceMemberViewSet(WorkspaceAdminMixin, viewsets.ViewSet):
 
         removed = membership.user
         membership.delete()
+        invalidate_stream_cache(removed.pk)
         log_event(actor=request.user, workspace=workspace, action='MEMBER_REMOVED',
                   target_user=removed, metadata={'removed_user_id': removed.pk},
                   ip_address=get_client_ip(request))
@@ -515,6 +568,7 @@ class AcceptInviteView(APIView):
             membership = accept_invite(token=token, user=request.user)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        invalidate_stream_cache(request.user.id)
         return Response({
             'workspace_id': membership.workspace_id,
             'workspace_slug': membership.workspace.slug,
