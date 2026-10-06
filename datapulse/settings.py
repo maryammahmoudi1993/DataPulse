@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'audit',
     'drf_spectacular',
     'integrations',
+    'datapulse',
 ]
 
 MIDDLEWARE = [
