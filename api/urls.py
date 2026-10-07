@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_nested.routers import NestedDefaultRouter
 
 from api.views import (
+    AlertRuleViewSet,
     AcceptInviteView,
     AlertViewSet,
     DataPointViewSet,
@@ -29,6 +30,7 @@ router.register('integrations/notifications', NotificationLogViewSet, basename='
 streams_router = NestedDefaultRouter(router, 'streams', lookup='stream')
 streams_router.register('datapoints', DataPointViewSet, basename='stream-datapoints')
 streams_router.register('alerts', AlertViewSet, basename='stream-alerts')
+streams_router.register('rules', AlertRuleViewSet, basename='stream-rules')
 
 workspaces_router = NestedDefaultRouter(router, 'workspaces', lookup='workspace')
 workspaces_router.register('members', WorkspaceMemberViewSet, basename='workspace-members')

@@ -67,3 +67,32 @@ export interface NotifyConfig {
   min_severity: string
   is_active: boolean
 }
+
+export type TrendDirection = 'up' | 'down' | 'flat' | 'unknown'
+
+export interface Trend {
+  direction: TrendDirection
+  slope: number
+  r2: number
+  samples: number
+}
+
+export interface Rollup {
+  period: 'HOURLY' | 'DAILY'
+  bucket_ts: string
+  count: number
+  mean: number
+  std: number
+  min_val: number
+  max_val: number
+  p50: number
+  p95: number
+  p99: number
+  alert_count: number
+}
+
+export interface AlertRate {
+  period_hours: number
+  total: number
+  by_severity: Record<string, number>
+}

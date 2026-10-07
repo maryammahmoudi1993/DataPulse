@@ -9,15 +9,16 @@ from celery.result import AsyncResult
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.invite_service import accept_invite, create_invite
 from accounts.models import UserWorkspace, WorkspaceInvite
 from accounts.serializers import MemberSerializer, WorkspaceInviteSerializer
-from alerts.models import Alert, WebhookEndpoint
-from streams.models import Stream, Workspace
+from alerts.models import Alert, AlertRule, WebhookEndpoint
+from streams.analytics import alert_rate, moving_average, trend_direction
+from streams.models import Stream, StreamRollup, Workspace
 
 from api.cache_keys import (
     alert_list_key,
@@ -29,12 +30,14 @@ from api.cache_keys import (
 from api.mixins import WorkspaceScopedMixin
 from api.pagination import TimestampCursorPagination
 from api.serializers import (
+    AlertRuleSerializer,
     AlertSerializer,
     AuditEventSerializer,
     DataPointSerializer,
     NotificationLogSerializer,
     PagerDutyIntegrationSerializer,
     SlackIntegrationSerializer,
+    StreamRollupSerializer,
     StreamSerializer,
     WebhookEndpointSerializer,
     WorkspaceSerializer,
@@ -46,6 +49,24 @@ from exports.models import ExportJob
 from exports.tasks import run_export
 from ingestion.models import DataPoint
 from integrations.models import NotificationLog, PagerDutyIntegration, SlackIntegration
+
+
+def _int_param(request, name, default, maximum):
+    """Read a positive integer query parameter, clamped to ``maximum``.
+
+    Raises:
+        ValidationError: When the parameter is present but not a positive integer.
+    """
+    raw = request.query_params.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValidationError({name: 'Must be a positive integer.'})
+    return min(value, maximum)
 
 
 class IsAuthenticatedOrPublicDemo(permissions.BasePermission):
@@ -277,6 +298,60 @@ class StreamViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         log_event(actor=request.user, workspace=stream.workspace, action='STREAM_RESUMED',
                   stream=stream, ip_address=get_client_ip(request))
         return Response(StreamSerializer(stream).data)
+
+    @extend_schema(
+        summary='Stream rollups', tags=['analytics'],
+        parameters=[
+            OpenApiParameter('period', str, enum=[StreamRollup.PERIOD_HOURLY, StreamRollup.PERIOD_DAILY]),
+            OpenApiParameter('limit', int),
+        ],
+        responses=StreamRollupSerializer(many=True),
+    )
+    @action(detail=True, methods=['get'], url_path='analytics/rollups')
+    def analytics_rollups(self, request, *args, **kwargs):
+        """Return pre-computed hourly or daily aggregates, newest first."""
+        stream = self.get_object()
+        period = request.query_params.get('period', StreamRollup.PERIOD_HOURLY).upper()
+        if period not in (StreamRollup.PERIOD_HOURLY, StreamRollup.PERIOD_DAILY):
+            raise ValidationError({'period': 'Must be HOURLY or DAILY.'})
+        limit = _int_param(request, 'limit', 48, 720)
+        rollups = StreamRollup.objects.filter(stream=stream, period=period).order_by('-bucket_ts')[:limit]
+        return Response(StreamRollupSerializer(rollups, many=True).data)
+
+    @extend_schema(
+        summary='Moving average', tags=['analytics'],
+        parameters=[OpenApiParameter('window', int), OpenApiParameter('last_n', int)],
+        responses={200: {'type': 'array', 'items': {'type': 'object'}}},
+    )
+    @action(detail=True, methods=['get'], url_path='analytics/moving-average')
+    def analytics_moving_average(self, request, *args, **kwargs):
+        """Return the latest points with a rolling mean."""
+        stream = self.get_object()
+        window = _int_param(request, 'window', 20, 100)
+        last_n = _int_param(request, 'last_n', 200, 1000)
+        return Response(moving_average(stream, window=window, last_n=last_n))
+
+    @extend_schema(
+        summary='Trend direction', tags=['analytics'],
+        parameters=[OpenApiParameter('last_n', int)],
+        responses={200: {'type': 'object'}},
+    )
+    @action(detail=True, methods=['get'], url_path='analytics/trend')
+    def analytics_trend(self, request, *args, **kwargs):
+        """Return the slope, R-squared and direction of the recent signal."""
+        stream = self.get_object()
+        return Response(trend_direction(stream, last_n=_int_param(request, 'last_n', 60, 500)))
+
+    @extend_schema(
+        summary='Alert rate', tags=['analytics'],
+        parameters=[OpenApiParameter('hours', int)],
+        responses={200: {'type': 'object'}},
+    )
+    @action(detail=True, methods=['get'], url_path='analytics/alert-rate')
+    def analytics_alert_rate(self, request, *args, **kwargs):
+        """Return alert counts per severity for the last N hours."""
+        stream = self.get_object()
+        return Response(alert_rate(stream, hours=_int_param(request, 'hours', 24, 168)))
 
 
 class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
@@ -697,3 +772,36 @@ class NotificationLogViewSet(WorkspaceScopedMixin, viewsets.ReadOnlyModelViewSet
         return NotificationLog.objects.filter(
             alert__stream__workspace_id__in=self.get_user_workspace_ids()
         ).select_related('alert__stream')
+
+
+class AlertRuleViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    """User-defined threshold rules of one stream."""
+
+    serializer_class = AlertRuleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return AlertRule.objects.filter(
+            stream_id=self.kwargs.get('stream_pk'),
+            stream__workspace_id__in=self.get_user_workspace_ids(),
+        ).select_related('stream__workspace')
+
+    def _get_stream(self):
+        return get_object_or_404(
+            Stream.objects.select_related('workspace'),
+            pk=self.kwargs.get('stream_pk'),
+            workspace_id__in=self.get_user_workspace_ids(),
+        )
+
+    def perform_create(self, serializer):
+        stream = self._get_stream()
+        rule = serializer.save(stream=stream, created_by=self.request.user)
+        log_event(actor=self.request.user, workspace=stream.workspace, action='ALERT_RULE_CREATED',
+                  stream=stream, metadata={'rule_name': rule.name, 'condition': rule.condition},
+                  ip_address=get_client_ip(self.request))
+
+    def perform_destroy(self, instance):
+        log_event(actor=self.request.user, workspace=instance.stream.workspace, action='ALERT_RULE_DELETED',
+                  stream=instance.stream, metadata={'rule_name': instance.name},
+                  ip_address=get_client_ip(self.request))
+        instance.delete()

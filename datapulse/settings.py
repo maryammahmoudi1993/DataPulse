@@ -175,6 +175,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'exports.tasks.cleanup_stale_exports',
         'schedule': 3600 * 6,
     },
+    'hourly-rollups': {
+        'task': 'streams.tasks.compute_hourly_rollups',
+        'schedule': 3600,
+    },
+    'daily-rollups': {
+        'task': 'streams.tasks.compute_daily_rollups',
+        'schedule': 3600 * 24,
+    },
 }
 
 

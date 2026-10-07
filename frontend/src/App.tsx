@@ -5,6 +5,8 @@ import { AlertFeed } from './components/AlertFeed'
 import { SimulatorControls } from './components/SimulatorControls'
 import { LSTMPanel } from './components/LSTMPanel'
 import { StatsPanel } from './components/StatsPanel'
+import { AnalyticsPanel } from './components/AnalyticsPanel'
+import { MultiStreamView } from './components/MultiStreamView'
 import { ExportButton } from './components/ExportButton'
 import { LoginPage } from './components/LoginPage'
 import { CreateStreamModal } from './components/CreateStreamModal'
@@ -13,10 +15,13 @@ import { InviteAcceptPage } from './pages/InviteAcceptPage'
 import { api, clearSession } from './api'
 import type { StreamInfo } from './types'
 
+type ViewMode = 'single' | 'compare'
+
 function Dashboard() {
   const [authed, setAuthed] = useState(!!localStorage.getItem('access'))
   const [showCreate, setShowCreate] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('single')
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [currentUserId, setCurrentUserId] = useState<number | null>(null)
   const [streams, setStreams] = useState<StreamInfo[]>([])
@@ -97,6 +102,19 @@ function Dashboard() {
 
       <main className="max-w-6xl mx-auto px-6 py-6 space-y-6">
         <div className="flex items-center gap-4">
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+            {(['single', 'compare'] as ViewMode[]).map(m => (
+              <button
+                key={m}
+                onClick={() => setViewMode(m)}
+                className={`text-xs px-3 py-1.5 rounded-md transition ${
+                  viewMode === m ? 'bg-white shadow-sm font-medium text-gray-800' : 'text-gray-500'
+                }`}
+              >
+                {m === 'single' ? 'Single stream' : 'Compare'}
+              </button>
+            ))}
+          </div>
           <label className="text-sm text-gray-600">Stream</label>
           <select
             value={activeStreamId ?? ''}
@@ -114,7 +132,11 @@ function Dashboard() {
           )}
         </div>
 
-        <StreamChart points={points} threshold={threshold} />
+        {viewMode === 'single' ? (
+          <StreamChart points={points} threshold={threshold} />
+        ) : (
+          <MultiStreamView streams={streams} />
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="md:col-span-2 bg-white rounded-xl border border-gray-200 p-4">
@@ -128,6 +150,7 @@ function Dashboard() {
           </div>
           <div className="space-y-6">
             <StatsPanel alerts={alerts} />
+            <AnalyticsPanel streamId={activeStreamId} />
             {activeStream && activeStream.source_type === 'SIMULATOR' && (
               <SimulatorControls
                 key={activeStream.id}

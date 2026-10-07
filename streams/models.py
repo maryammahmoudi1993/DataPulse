@@ -96,3 +96,40 @@ class Stream(models.Model):
 
     def __str__(self):
         return f'{self.workspace.slug}/{self.name}'
+
+
+class StreamRollup(models.Model):
+    """Pre-computed aggregates per stream and time bucket.
+
+    Written by the rollup Celery tasks and read by the analytics API. The API
+    exposes rollups read-only.
+    """
+
+    PERIOD_HOURLY = 'HOURLY'
+    PERIOD_DAILY = 'DAILY'
+    PERIOD_CHOICES = [
+        (PERIOD_HOURLY, 'Hourly'),
+        (PERIOD_DAILY, 'Daily'),
+    ]
+
+    stream = models.ForeignKey(Stream, on_delete=models.CASCADE, related_name='rollups')
+    period = models.CharField(max_length=10, choices=PERIOD_CHOICES)
+    bucket_ts = models.DateTimeField(db_index=True, help_text='Start of the bucket, truncated to the period.')
+    count = models.PositiveIntegerField()
+    mean = models.FloatField()
+    std = models.FloatField()
+    min_val = models.FloatField()
+    max_val = models.FloatField()
+    p50 = models.FloatField()
+    p95 = models.FloatField()
+    p99 = models.FloatField()
+    alert_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('stream', 'period', 'bucket_ts')
+        ordering = ['-bucket_ts']
+        indexes = [models.Index(fields=['stream', 'period', 'bucket_ts'])]
+
+    def __str__(self):
+        return f'Rollup[{self.period}] stream={self.stream_id} {self.bucket_ts}'

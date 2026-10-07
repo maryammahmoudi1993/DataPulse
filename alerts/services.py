@@ -12,7 +12,7 @@ from realtime.publisher import publish_stream_event
 logger = logging.getLogger(__name__)
 
 
-def create_alert(stream, point, result):
+def create_alert(stream, point, result, detector_type=None):
     """Persist an alert for an anomalous point unless it is a duplicate.
 
     An alert is suppressed when the stream already raised one of the same
@@ -22,6 +22,7 @@ def create_alert(stream, point, result):
         stream: The Stream the point belongs to.
         point: The anomalous DataPoint.
         result: The DetectionResult produced by the detector.
+        detector_type: Source recorded on the alert; defaults to the stream's detector.
 
     Returns:
         The new Alert, or None when it was suppressed as a duplicate.
@@ -43,7 +44,7 @@ def create_alert(stream, point, result):
         value=result.value,
         anomaly_score=result.score,
         severity=result.severity,
-        detector_type=stream.detector_type,
+        detector_type=detector_type or stream.detector_type,
     )
 
     alerts_created.labels(severity=alert.severity).inc()
