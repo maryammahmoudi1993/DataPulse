@@ -22,6 +22,7 @@ def detect_and_alert(point_id):
         Dict with ``is_anomaly``, ``score`` and ``severity``, or None when
         the point no longer exists.
     """
+    from alerts.rules import evaluate_rules
     from alerts.services import create_alert
     from ingestion.models import DataPoint
 
@@ -57,6 +58,9 @@ def detect_and_alert(point_id):
         }
         point.save(update_fields=['metadata'])
         create_alert(stream, point, result)
+
+    # User-defined rules run alongside ML detection and never raise.
+    evaluate_rules(stream, point, history[-1] if history else None)
 
     return {
         'is_anomaly': result.is_anomaly,

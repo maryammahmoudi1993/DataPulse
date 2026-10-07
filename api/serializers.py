@@ -1,10 +1,10 @@
 from rest_framework import serializers
 
-from alerts.models import Alert, WebhookEndpoint
+from alerts.models import Alert, AlertRule, WebhookEndpoint
 from audit.models import AuditEvent
 from ingestion.models import DataPoint
 from integrations.models import NotificationLog, PagerDutyIntegration, SlackIntegration
-from streams.models import Stream, Workspace
+from streams.models import Stream, StreamRollup, Workspace
 
 
 class WorkspaceSerializer(serializers.ModelSerializer):
@@ -110,3 +110,19 @@ class NotificationLogSerializer(serializers.ModelSerializer):
         model = NotificationLog
         fields = ['id', 'alert', 'channel', 'status', 'response_code', 'error', 'created_at']
         read_only_fields = fields
+
+
+class StreamRollupSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StreamRollup
+        fields = ['period', 'bucket_ts', 'count', 'mean', 'std', 'min_val', 'max_val',
+                  'p50', 'p95', 'p99', 'alert_count']
+        read_only_fields = fields
+
+
+class AlertRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlertRule
+        fields = ['id', 'stream', 'name', 'condition', 'threshold', 'severity',
+                  'is_active', 'cooldown_minutes', 'last_fired', 'created_at']
+        read_only_fields = ['id', 'stream', 'last_fired', 'created_at']

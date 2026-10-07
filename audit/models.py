@@ -19,6 +19,8 @@ class AuditEvent(models.Model):
         ('LSTM_TRAINING_TRIGGERED', 'LSTM training triggered'),
         ('WEBHOOK_CREATED', 'Webhook created'),
         ('WEBHOOK_DELETED', 'Webhook deleted'),
+        ('ALERT_RULE_CREATED', 'Alert rule created'),
+        ('ALERT_RULE_DELETED', 'Alert rule deleted'),
     ]
 
     workspace = models.ForeignKey('streams.Workspace', on_delete=models.CASCADE, related_name='audit_events')
