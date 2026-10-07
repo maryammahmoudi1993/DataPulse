@@ -33,7 +33,8 @@ function saveTokens(tokens: Partial<Tokens>): void {
   if (tokens.refresh) localStorage.setItem('refresh', tokens.refresh)
 }
 
-async function refreshAccessToken(): Promise<boolean> {
+/** Exchange the stored refresh token for a new access token; returns false on failure. */
+export async function refreshAccessToken(): Promise<boolean> {
   const refresh = localStorage.getItem('refresh')
   if (!refresh) return false
   const res = await fetch(`${BASE}/auth/token/refresh/`, {

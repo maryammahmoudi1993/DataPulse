@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { apiRequest, getToken } from '../api'
+import { apiRequest, clearSession, getToken, refreshAccessToken } from '../api'
 import type { DataPoint, StreamAlert } from '../types'
 
 const MAX_POINTS = 200
@@ -22,6 +22,21 @@ export function useStreamSocket(streamId: number | null): SocketState {
     setAlerts([])
 
     let cancelled = false
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+    // The server reports how long the access token lives; swap in a fresh
+    // one over the open socket just before it expires.
+    const scheduleRefresh = (ws: WebSocket, seconds: number) => {
+      clearTimeout(refreshTimer)
+      refreshTimer = setTimeout(async () => {
+        if (cancelled || ws.readyState !== WebSocket.OPEN) return
+        if (!(await refreshAccessToken())) return
+        const access = getToken()
+        if (!cancelled && access && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'refresh_token', access }))
+        }
+      }, Math.max(0, seconds) * 1000)
+    }
 
     // Backfill recent history so the chart is not empty on load.
     apiRequest(`/streams/${streamId}/datapoints/?limit=${MAX_POINTS}`)
@@ -66,6 +81,16 @@ export function useStreamSocket(streamId: number | null): SocketState {
     ws.onmessage = event => {
       try {
         const msg = JSON.parse(event.data as string)
+        if (msg.type === 'token_ttl' || msg.type === 'token_refreshed') {
+          scheduleRefresh(ws, msg.seconds as number)
+          return
+        }
+        if (msg.type === 'auth_error') {
+          ws.close()
+          clearSession()
+          window.location.assign('/')
+          return
+        }
         if (msg.type === 'datapoint') {
           setPoints(prev => {
             if (prev.some(p => p.id === msg.id)) return prev
@@ -82,6 +107,7 @@ export function useStreamSocket(streamId: number | null): SocketState {
 
     return () => {
       cancelled = true
+      clearTimeout(refreshTimer)
       ws.close()
     }
   }, [streamId])
