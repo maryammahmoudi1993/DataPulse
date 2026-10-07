@@ -85,3 +85,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 - 3 notification channels (Webhook, Slack, PagerDuty)
 - 13 audit event types
 - 257 tests · 96% coverage · flake8 clean
+
+---
+
+## [1.1.0] — 2026-10-07
+
+### Added
+
+**Analytics (Phase 10)**
+- `StreamRollup` model: pre-computed hourly and daily aggregates
+  (count, mean, std, min, max, p50, p95, p99, alert_count)
+- `compute_hourly_rollups` and `compute_daily_rollups` Celery Beat tasks, idempotent
+- Analytics endpoints per stream:
+  - `GET /analytics/rollups/` — rollup history (HOURLY / DAILY)
+  - `GET /analytics/moving-average/` — configurable window, last N points
+  - `GET /analytics/trend/` — linear regression slope, R², direction
+  - `GET /analytics/alert-rate/` — alert counts by severity for the last N hours
+- `AlertRule` model: user-defined threshold rules (ABOVE / BELOW / CHANGE_PCT)
+  with cooldown, severity, active toggle and last_fired tracking
+- Alert rules engine, evaluated after ML detection on every incoming point;
+  `/api/streams/{id}/rules/` CRUD, audited as `ALERT_RULE_CREATED` / `ALERT_RULE_DELETED`
+- WebSocket token refresh: the server sends `token_ttl` on connect and the client
+  swaps in a new access token over the open socket before expiry
+- Multi-stream comparison view: overlay up to 6 streams with a trend indicator
+- Analytics panel in the sidebar: trend direction, alert rate, latest hourly rollup
