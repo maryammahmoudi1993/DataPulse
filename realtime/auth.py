@@ -9,14 +9,23 @@ JWT_SUBPROTOCOL = 'jwt'
 
 
 @database_sync_to_async
-def _user_from_token(raw_token):
-    """Resolve an access token to a user, or AnonymousUser when invalid."""
+def get_user_from_token(raw_token):
+    """Resolve an access token to ``(user, exp)``.
+
+    Returns:
+        The active user and the token's expiry as a Unix timestamp, or
+        ``(AnonymousUser, None)`` when the token is invalid or expired.
+    """
     try:
-        user_id = AccessToken(raw_token)['user_id']
+        token = AccessToken(raw_token)
+        user_id = token['user_id']
+        exp = int(token['exp'])
     except (TokenError, KeyError):
-        return AnonymousUser()
+        return AnonymousUser(), None
     user = get_user_model().objects.filter(pk=user_id, is_active=True).first()
-    return user or AnonymousUser()
+    if user is None:
+        return AnonymousUser(), None
+    return user, exp
 
 
 class JWTAuthMiddleware(BaseMiddleware):
@@ -32,5 +41,5 @@ class JWTAuthMiddleware(BaseMiddleware):
         protocols = list(scope.get('subprotocols') or [])
         if len(protocols) == 2 and protocols[0] == JWT_SUBPROTOCOL:
             scope = dict(scope)
-            scope['user'] = await _user_from_token(protocols[1])
+            scope['user'], scope['token_exp'] = await get_user_from_token(protocols[1])
         return await super().__call__(scope, receive, send)
