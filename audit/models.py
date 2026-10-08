@@ -21,6 +21,10 @@ class AuditEvent(models.Model):
         ('WEBHOOK_DELETED', 'Webhook deleted'),
         ('ALERT_RULE_CREATED', 'Alert rule created'),
         ('ALERT_RULE_DELETED', 'Alert rule deleted'),
+        ('API_KEY_CREATED', 'API key created'),
+        ('API_KEY_DELETED', 'API key deleted'),
+        ('SHARE_CREATED', 'Share link created'),
+        ('SHARE_REVOKED', 'Share link revoked'),
     ]
 
     workspace = models.ForeignKey('streams.Workspace', on_delete=models.CASCADE, related_name='audit_events')

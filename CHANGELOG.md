@@ -109,3 +109,36 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   swaps in a new access token over the open socket before expiry
 - Multi-stream comparison view: overlay up to 6 streams with a trend indicator
 - Analytics panel in the sidebar: trend direction, alert rate, latest hourly rollup
+
+
+---
+
+## [1.2.0] — 2026-10-08
+
+### Added
+
+**API Keys (Phase 11)**
+- `api_keys` app — `APIKey` model with hashed (SHA-256) storage, `dp_live_` prefix, workspace scoping,
+  per-key scopes (`read:streams`, `write:datapoints`, `read:alerts`) and optional expiry
+- `APIKeyAuthentication` — reads `Authorization: Api-Key ...`; keys are only honoured on endpoints that opt in
+  (`api_key_enabled`), so a scoped key never inherits its creator's full access
+- Raw key shown once on creation; never returned again
+- `/api/api-keys/` management API (audited as `API_KEY_CREATED` / `API_KEY_DELETED`)
+- `POST /api/streams/{id}/ingest/` — data ingestion for API-key and JWT clients; triggers detection and live updates
+- `GET /api/streams/{id}/datapoints/` accepts `read:streams` keys
+
+**Annotations (Phase 11)**
+- `annotations` app — `StreamAnnotation` model with EVENT, MARKER and REGION types, color and label
+- CRUD API nested under streams (`/api/streams/{id}/annotations/`) with `after` / `before` time-range filter
+- Chart markers (`ReferenceLine` / `ReferenceArea`) snapped to the plotted points
+- Double-click the chart to open the annotation modal at the cursor's timestamp
+
+**Share Links (Phase 11)**
+- `sharing` app — `DashboardShare` model with UUID token, expiry, view counter and `max_points`
+- Public `GET /api/share/{token}/` — no authentication; returns recent points and open alerts only
+- `/api/shares/` management API; DELETE revokes the link (audited as `SHARE_CREATED` / `SHARE_REVOKED`)
+- `ShareModal` — generate a link with an expiry selector and one-click copy
+- `/share/:token` frontend page — read-only chart and alert list for stakeholders
+
+### Settings
+- `API_KEY_PREFIX`, `API_KEY_HASH_ALGORITHM`, `SHARE_LINK_TTL_DAYS`, `SHARE_LINK_MAX_POINTS`

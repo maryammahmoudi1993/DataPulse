@@ -11,9 +11,12 @@ import { ExportButton } from './components/ExportButton'
 import { LoginPage } from './components/LoginPage'
 import { CreateStreamModal } from './components/CreateStreamModal'
 import { WorkspaceSettings } from './components/WorkspaceSettings'
+import { AddAnnotationModal } from './components/AddAnnotationModal'
+import { ShareModal } from './components/ShareModal'
 import { InviteAcceptPage } from './pages/InviteAcceptPage'
+import { ShareViewPage } from './pages/ShareViewPage'
 import { api, clearSession } from './api'
-import type { StreamInfo } from './types'
+import type { Annotation, StreamInfo } from './types'
 
 type ViewMode = 'single' | 'compare'
 
@@ -21,6 +24,9 @@ function Dashboard() {
   const [authed, setAuthed] = useState(!!localStorage.getItem('access'))
   const [showCreate, setShowCreate] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showShare, setShowShare] = useState(false)
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [annotationTs, setAnnotationTs] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('single')
   const [workspaceId, setWorkspaceId] = useState<number | null>(null)
   const [currentUserId, setCurrentUserId] = useState<number | null>(null)
@@ -36,6 +42,16 @@ function Dashboard() {
       })
       .catch(() => {})
   }, [])
+
+  const loadAnnotations = useCallback(() => {
+    if (!authed || activeStreamId === null) return
+    api.annotations(activeStreamId).then(setAnnotations).catch(() => setAnnotations([]))
+  }, [authed, activeStreamId])
+
+  useEffect(() => {
+    setAnnotations([])
+    loadAnnotations()
+  }, [loadAnnotations])
 
   useEffect(() => {
     if (!authed) return
@@ -85,6 +101,14 @@ function Dashboard() {
           >
             + New stream
           </button>
+          {activeStream && (
+            <button
+              onClick={() => setShowShare(true)}
+              className="text-sm px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+            >
+              Share
+            </button>
+          )}
           <button
             onClick={() => setShowSettings(true)}
             disabled={workspaceId === null}
@@ -133,7 +157,12 @@ function Dashboard() {
         </div>
 
         {viewMode === 'single' ? (
-          <StreamChart points={points} threshold={threshold} />
+          <StreamChart
+            points={points}
+            threshold={threshold}
+            annotations={annotations}
+            onClickTime={setAnnotationTs}
+          />
         ) : (
           <MultiStreamView streams={streams} />
         )}
@@ -174,6 +203,23 @@ function Dashboard() {
         />
       )}
 
+      {showShare && activeStream && (
+        <ShareModal
+          streamId={activeStream.id}
+          streamName={activeStream.name}
+          onClose={() => setShowShare(false)}
+        />
+      )}
+
+      {annotationTs && activeStreamId !== null && (
+        <AddAnnotationModal
+          streamId={activeStreamId}
+          timestamp={annotationTs}
+          onSaved={loadAnnotations}
+          onClose={() => setAnnotationTs(null)}
+        />
+      )}
+
       {showCreate && workspaceId !== null && (
         <CreateStreamModal
           workspaceId={workspaceId}
@@ -190,6 +236,10 @@ export default function App() {
   if (pathname.startsWith('/invite/')) {
     const token = pathname.replace(/^\/invite\//, '').replace(/\/$/, '')
     return <InviteAcceptPage token={token} />
+  }
+  if (pathname.startsWith('/share/')) {
+    const token = pathname.replace(/^\/share\//, '').replace(/\/$/, '')
+    return <ShareViewPage token={token} />
   }
   return <Dashboard />
 }

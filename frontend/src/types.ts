@@ -96,3 +96,25 @@ export interface AlertRate {
   total: number
   by_severity: Record<string, number>
 }
+
+export type AnnotationType = 'EVENT' | 'MARKER' | 'REGION'
+
+export interface Annotation {
+  id: number
+  label: string
+  description?: string
+  annotation_type: AnnotationType
+  color: string
+  timestamp: string
+  end_timestamp: string | null
+}
+
+export interface ShareData {
+  title: string
+  stream_name: string
+  detector_type: string
+  expires_at: string
+  view_count: number
+  points: { timestamp: string; value: number }[]
+  open_alerts: { severity: string; score: number; timestamp: string }[]
+}
