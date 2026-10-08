@@ -1,4 +1,4 @@
-import type { AuditEntry, Invite, InviteInfo, Member, NotifyConfig } from './types'
+import type { Annotation, AuditEntry, Invite, InviteInfo, Member, NotifyConfig } from './types'
 
 const BASE = '/api'
 
@@ -163,6 +163,15 @@ export const api = {
     const qs = action ? `?action=${encodeURIComponent(action)}` : ''
     return apiFetch<AuditEntry[]>(`/workspaces/${workspaceId}/audit/${qs}`)
   },
+  annotations: (streamId: number) =>
+    apiFetch<Annotation[]>(`/streams/${streamId}/annotations/`),
+  createAnnotation: (streamId: number, data: object) =>
+    apiFetch<Annotation>(`/streams/${streamId}/annotations/`, { method: 'POST', body: JSON.stringify(data) }),
+  createShare: (streamId: number, title: string, days: number) =>
+    apiFetch<{ share_url: string }>('/shares/', {
+      method: 'POST',
+      body: JSON.stringify({ stream: streamId, title, days }),
+    }),
   compareDetectors: (id: number, a: string, b: string) =>
     apiFetch<object>(`/streams/${id}/compare-detectors/`, {
       method: 'POST',
