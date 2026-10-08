@@ -47,6 +47,9 @@ INSTALLED_APPS = [
     'audit',
     'drf_spectacular',
     'integrations',
+    'api_keys',
+    'annotations',
+    'sharing',
     'datapulse',
 ]
 
@@ -126,6 +129,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'api_keys.authentication.APIKeyAuthentication',
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
     ],
@@ -303,3 +307,12 @@ CACHES = {
 STREAM_LIST_CACHE_TTL = env.int('STREAM_LIST_CACHE_TTL', default=60)  # seconds
 ALERT_LIST_CACHE_TTL = env.int('ALERT_LIST_CACHE_TTL', default=30)
 STREAM_STATS_CACHE_TTL = env.int('STREAM_STATS_CACHE_TTL', default=120)
+
+
+# API keys
+API_KEY_PREFIX = 'dp_live_'
+API_KEY_HASH_ALGORITHM = 'sha256'
+
+# Share links
+SHARE_LINK_TTL_DAYS = env.int('SHARE_LINK_TTL_DAYS', default=30)
+SHARE_LINK_MAX_POINTS = env.int('SHARE_LINK_MAX_POINTS', default=200)
