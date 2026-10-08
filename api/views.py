@@ -1,3 +1,4 @@
+import math
 import os
 
 from django.conf import settings
@@ -5,18 +6,24 @@ from django.core.cache import cache
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from celery.result import AsyncResult
-from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view
-from rest_framework import permissions, status, viewsets
+from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view, inline_serializer
+from rest_framework import permissions, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from accounts.invite_service import accept_invite, create_invite
 from accounts.models import UserWorkspace, WorkspaceInvite
 from accounts.serializers import MemberSerializer, WorkspaceInviteSerializer
 from alerts.models import Alert, AlertRule, WebhookEndpoint
+from annotations.models import StreamAnnotation
+from api_keys.authentication import APIKeyAuthentication
+from api_keys.models import APIKey
+from api_keys.permissions import ReadStreamsPermission, WriteDatapointsPermission
 from streams.analytics import alert_rate, moving_average, trend_direction
 from streams.models import Stream, StreamRollup, Workspace
 
@@ -32,11 +39,14 @@ from api.pagination import TimestampCursorPagination
 from api.serializers import (
     AlertRuleSerializer,
     AlertSerializer,
+    APIKeySerializer,
     AuditEventSerializer,
+    DashboardShareSerializer,
     DataPointSerializer,
     NotificationLogSerializer,
     PagerDutyIntegrationSerializer,
     SlackIntegrationSerializer,
+    StreamAnnotationSerializer,
     StreamRollupSerializer,
     StreamSerializer,
     WebhookEndpointSerializer,
@@ -45,10 +55,15 @@ from api.serializers import (
 from api.throttles import WorkspaceRateThrottle
 from audit.models import AuditEvent
 from audit.services import get_client_ip, log_event
+from datapulse.metrics import datapoints_ingested
+from detection.pipeline import detect_and_alert
 from exports.models import ExportJob
 from exports.tasks import run_export
 from ingestion.models import DataPoint
 from integrations.models import NotificationLog, PagerDutyIntegration, SlackIntegration
+from realtime.publisher import publish_stream_event
+from sharing.models import DashboardShare
+from sharing.service import create_share
 
 
 def _int_param(request, name, default, maximum):
@@ -363,13 +378,18 @@ class DataPointViewSet(viewsets.ReadOnlyModelViewSet):
 
     serializer_class = DataPointSerializer
     pagination_class = TimestampCursorPagination
+    api_key_enabled = True
+    permission_classes = [ReadStreamsPermission]
 
     def get_queryset(self):
         stream_pk = self.kwargs.get('stream_pk')
-        return DataPoint.objects.filter(
+        queryset = DataPoint.objects.filter(
             stream_id=stream_pk,
             stream__workspace__in=Workspace.accessible_to(self.request.user),
         )
+        if isinstance(self.request.auth, APIKey):
+            queryset = queryset.filter(stream__workspace_id=self.request.auth.workspace_id)
+        return queryset
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -805,3 +825,193 @@ class AlertRuleViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
                   stream=instance.stream, metadata={'rule_name': instance.name},
                   ip_address=get_client_ip(self.request))
         instance.delete()
+
+
+def _bounded_int(value, name, maximum):
+    """Parse an optional positive integer body field, clamped to ``maximum``.
+
+    Raises:
+        ValidationError: When the value is present but not a positive integer.
+    """
+    if value in (None, ''):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = 0
+    if number < 1:
+        raise ValidationError({name: 'Must be a positive integer.'})
+    return min(number, maximum)
+
+
+class APIKeyViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    """API key management. The raw key is shown once on creation and never again."""
+
+    serializer_class = APIKeySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'delete']
+
+    def get_queryset(self):
+        return APIKey.objects.filter(workspace_id__in=self.get_user_workspace_ids())
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        workspace = get_object_or_404(self.get_accessible_workspaces(), pk=data['workspace'].pk)
+
+        instance, raw_key = APIKey.create(
+            workspace=workspace,
+            created_by=request.user,
+            name=data.get('name') or 'Unnamed key',
+            scopes=data['scopes'],
+            expires_at=data.get('expires_at'),
+        )
+        instance._raw_key = raw_key  # attached for this response only
+        log_event(actor=request.user, workspace=workspace, action='API_KEY_CREATED',
+                  metadata={'key_name': instance.name, 'prefix': instance.prefix},
+                  ip_address=get_client_ip(request))
+        return Response(self.get_serializer(instance).data, status=status.HTTP_201_CREATED)
+
+    def perform_destroy(self, instance):
+        log_event(actor=self.request.user, workspace=instance.workspace, action='API_KEY_DELETED',
+                  metadata={'key_prefix': instance.prefix}, ip_address=get_client_ip(self.request))
+        instance.delete()
+
+
+@extend_schema(
+    tags=['streams'],
+    summary='Ingest a data point',
+    description='Accepts `Authorization: Api-Key` with the `write:datapoints` scope, or a JWT of a workspace member.',
+    request=inline_serializer('IngestRequest', {
+        'value': serializers.FloatField(),
+        'metadata': serializers.DictField(required=False),
+    }),
+    responses={201: inline_serializer('IngestResponse', {
+        'id': serializers.IntegerField(),
+        'value': serializers.FloatField(),
+        'timestamp': serializers.DateTimeField(),
+    })},
+)
+class DataPointIngestView(APIView):
+    """POST /api/streams/{stream_pk}/ingest/ - push one data point into a stream."""
+
+    authentication_classes = [APIKeyAuthentication, JWTAuthentication]
+    permission_classes = [WriteDatapointsPermission]
+    api_key_enabled = True
+
+    def post(self, request, stream_pk):
+        workspaces = Workspace.accessible_to(request.user)
+        if isinstance(request.auth, APIKey):
+            workspaces = workspaces.filter(pk=request.auth.workspace_id)
+        stream = get_object_or_404(Stream, pk=stream_pk, workspace__in=workspaces)
+
+        raw_value = request.data.get('value')
+        if raw_value is None:
+            raise ValidationError({'value': 'This field is required.'})
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            raise ValidationError({'value': 'A numeric value is required.'})
+        if not math.isfinite(value):
+            raise ValidationError({'value': 'A finite numeric value is required.'})
+
+        metadata = request.data.get('metadata', {})
+        if not isinstance(metadata, dict):
+            raise ValidationError({'metadata': 'Must be an object.'})
+
+        point = DataPoint.objects.create(stream=stream, timestamp=timezone.now(), value=value, metadata=metadata)
+        datapoints_ingested.labels(stream_id=stream.id).inc()
+        publish_stream_event(stream.id, {
+            'type': 'datapoint',
+            'id': point.id,
+            'value': point.value,
+            'timestamp': point.timestamp.isoformat(),
+        })
+        detect_and_alert.delay(point.id)
+        return Response(
+            {'id': point.id, 'value': value, 'timestamp': point.timestamp.isoformat()},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class StreamAnnotationViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    """CRUD for the annotations of one stream, scoped to the stream's workspace."""
+
+    serializer_class = StreamAnnotationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _time_param(self, name):
+        raw = self.request.query_params.get(name)
+        if raw is None:
+            return None
+        parsed = parse_datetime(raw.replace(' ', '+'))  # a bare "+" in a query string decodes to a space
+        if parsed is None:
+            raise ValidationError({name: 'Must be an ISO 8601 datetime.'})
+        return parsed
+
+    def get_queryset(self):
+        queryset = StreamAnnotation.objects.filter(
+            stream_id=self.kwargs.get('stream_pk'),
+            stream__workspace_id__in=self.get_user_workspace_ids(),
+        ).select_related('created_by')
+        after, before = self._time_param('after'), self._time_param('before')
+        if after:
+            queryset = queryset.filter(timestamp__gte=after)
+        if before:
+            queryset = queryset.filter(timestamp__lte=before)
+        return queryset
+
+    def perform_create(self, serializer):
+        stream = get_object_or_404(
+            Stream, pk=self.kwargs.get('stream_pk'), workspace_id__in=self.get_user_workspace_ids(),
+        )
+        serializer.save(stream=stream, created_by=self.request.user)
+
+
+class ShareViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    """Manage the read-only share links of the user's streams. DELETE revokes a link."""
+
+    serializer_class = DashboardShareSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    http_method_names = ['get', 'post', 'patch', 'delete']
+    MAX_DAYS = 365
+    MAX_POINTS = 1000
+
+    def get_queryset(self):
+        return DashboardShare.objects.filter(
+            stream__workspace_id__in=self.get_user_workspace_ids()
+        ).select_related('stream')
+
+    @extend_schema(request=inline_serializer('ShareCreateRequest', {
+        'stream': serializers.IntegerField(),
+        'title': serializers.CharField(required=False),
+        'days': serializers.IntegerField(required=False),
+        'max_points': serializers.IntegerField(required=False),
+    }))
+    def create(self, request, *args, **kwargs):
+        stream_id = request.data.get('stream')
+        stream = Stream.objects.filter(
+            pk=stream_id if str(stream_id).isdigit() else None,
+            workspace_id__in=self.get_user_workspace_ids(),
+        ).select_related('workspace').first()
+        if stream is None:
+            raise NotFound('Stream not found.')
+
+        share = create_share(
+            stream, request.user,
+            title=str(request.data.get('title', ''))[:120],
+            days=_bounded_int(request.data.get('days'), 'days', self.MAX_DAYS),
+            max_points=_bounded_int(request.data.get('max_points'), 'max_points', self.MAX_POINTS),
+        )
+        log_event(actor=request.user, workspace=stream.workspace, action='SHARE_CREATED', stream=stream,
+                  metadata={'share_id': share.pk}, ip_address=get_client_ip(request))
+        return Response(self.get_serializer(share).data, status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        share = self.get_object()
+        share.is_active = False
+        share.save(update_fields=['is_active'])
+        log_event(actor=request.user, workspace=share.stream.workspace, action='SHARE_REVOKED',
+                  stream=share.stream, metadata={'share_id': share.pk}, ip_address=get_client_ip(request))
+        return Response(status=status.HTTP_204_NO_CONTENT)
