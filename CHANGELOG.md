@@ -113,6 +113,20 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+**GraphQL API (Phase 12)**
+- `graphql_api` app built on Strawberry, served at `/graphql/` (HTTP) and `ws://.../graphql/` (subscriptions)
+- Queries: `workspaces`, `streams`, `stream`, `alerts`, with nested data points, alerts, annotations and rollups
+- Mutations: `createStream`, `setStreamStatus`, `ingestDataPoint`, `acknowledgeAlert`, `resolveAlert`, `createAnnotation`, `deleteAnnotation`
+- Subscription `streamEvents(streamId)` streaming live data points and alerts from the existing channel layer
+- Auth: `Bearer` JWT and `Api-Key` (read-only, scope- and workspace-restricted; mutations other than ingest refused); WebSocket sends `Authorization` in `connection_init`
+- Safety limits: query depth 8, 2000 tokens, page size capped at 200
+
+---
+
 ## [1.2.0] — 2026-10-08
 
 ### Added

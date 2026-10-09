@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'api_keys',
     'annotations',
     'sharing',
+    'graphql_api',
     'datapulse',
 ]
 
