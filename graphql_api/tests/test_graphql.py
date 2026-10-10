@@ -13,6 +13,7 @@ from strawberry.channels.testing import GraphQLWebsocketCommunicator
 
 from alerts.models import Alert
 from annotations.models import StreamAnnotation
+from accounts.models import UserWorkspace
 from api_keys.models import APIKey
 from ingestion.models import DataPoint
 from realtime.publisher import stream_group_name
@@ -293,3 +294,70 @@ def test_subscription_denies_foreign_user(stream):
     [result] = _run_subscription(stream, bearer(stranger), [])
 
     assert result.errors[0].extensions['code'] == 'FORBIDDEN'
+
+
+# --- roles ---------------------------------------------------------------
+
+@pytest.fixture
+def viewer(workspace):
+    user = User.objects.create_user('viewer', password='x')
+    UserWorkspace.objects.create(user=user, workspace=workspace, role=UserWorkspace.ROLE_VIEWER)
+    return user
+
+
+@pytest.fixture
+def member(workspace):
+    user = User.objects.create_user('member', password='x')
+    UserWorkspace.objects.create(user=user, workspace=workspace, role=UserWorkspace.ROLE_MEMBER)
+    return user
+
+
+def test_viewer_cannot_acknowledge_alert(viewer, alert):
+    result = gql('mutation { acknowledgeAlert(id: %d) { id } }' % alert.id, auth=bearer(viewer))
+
+    assert error_code(result) == 'FORBIDDEN'
+    alert.refresh_from_db()
+    assert alert.status == Alert.STATUS_OPEN
+
+
+def test_member_can_acknowledge_alert(member, alert):
+    result = gql('mutation { acknowledgeAlert(id: %d) { status } }' % alert.id, auth=bearer(member))
+
+    assert result['data']['acknowledgeAlert']['status'] == 'ACKNOWLEDGED'
+
+
+def test_viewer_can_still_read(viewer, stream):
+    result = gql('{ streams { id } }', auth=bearer(viewer))
+
+    assert [s['id'] for s in result['data']['streams']] == [stream.id]
+
+
+def test_viewer_cannot_use_any_write_mutation(viewer, workspace, stream, alert):
+    ts = timezone.now().isoformat()
+    annotation = StreamAnnotation.objects.create(stream=stream, label='a', timestamp=timezone.now())
+    attempts = [
+        ('mutation { resolveAlert(id: %d) { id } }' % alert.id, None),
+        ('mutation { setStreamStatus(id: %d, status: PAUSED) { id } }' % stream.id, None),
+        ('mutation { ingestDataPoint(streamId: %d, value: 1.0) { id } }' % stream.id, None),
+        ('mutation { deleteAnnotation(id: %d) }' % annotation.id, None),
+        ('mutation($i: CreateAnnotationInput!) { createAnnotation(input: $i) { id } }',
+         {'i': {'streamId': stream.id, 'label': 'x', 'timestamp': ts}}),
+        ('mutation($i: CreateStreamInput!) { createStream(input: $i) { id } }',
+         {'i': {'workspaceId': workspace.id, 'name': 'x'}}),
+    ]
+
+    for query, variables in attempts:
+        assert error_code(gql(query, auth=bearer(viewer), variables=variables)) == 'FORBIDDEN', query
+
+    stream.refresh_from_db()
+    assert stream.status == Stream.STATUS_ACTIVE
+    assert StreamAnnotation.objects.filter(pk=annotation.pk).exists()
+
+
+def test_legacy_m2m_member_can_write(workspace, alert):
+    legacy = User.objects.create_user('legacy', password='x')
+    workspace.members.add(legacy)
+
+    result = gql('mutation { resolveAlert(id: %d) { status } }' % alert.id, auth=bearer(legacy))
+
+    assert result['data']['resolveAlert']['status'] == 'RESOLVED'
