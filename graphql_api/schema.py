@@ -21,6 +21,7 @@ from ingestion.models import DataPoint
 from realtime.publisher import publish_stream_event, stream_group_name
 from streams.models import Stream
 
+from graphql_api.guards import require_member_or_above
 from graphql_api.types import (
     AlertStatus,
     AlertType,
@@ -120,6 +121,7 @@ def _writable_alert(ctx, alert_id):
     ).first()
     if alert is None:
         raise _not_found('Alert')
+    require_member_or_above(principal, alert.stream.workspace_id)
     return principal, alert
 
 
@@ -131,6 +133,7 @@ class Mutation:
         workspace = principal.workspaces().filter(pk=input.workspace_id).first()
         if workspace is None:
             raise _not_found('Workspace')
+        require_member_or_above(principal, workspace.pk)
         if not input.name.strip() or input.sampling_interval < 1:
             raise _bad_input('Invalid name or sampling interval.')
         stream = Stream.objects.create(
@@ -145,6 +148,7 @@ class Mutation:
         stream = Stream.objects.filter(pk=id, workspace__in=principal.workspaces()).first()
         if stream is None:
             raise _not_found('Stream')
+        require_member_or_above(principal, stream.workspace_id)
         stream.status = status.value
         stream.save(update_fields=['status', 'updated_at'])
         return StreamType.from_model(stream)
@@ -155,6 +159,8 @@ class Mutation:
         stream = Stream.objects.filter(pk=stream_id, workspace__in=principal.workspaces()).first()
         if stream is None:
             raise _not_found('Stream')
+        if principal.api_key is None:  # API keys are governed by scope, people by role
+            require_member_or_above(principal, stream.workspace_id)
         if not math.isfinite(value):
             raise _bad_input('A finite numeric value is required.')
         point = DataPoint.objects.create(stream=stream, timestamp=timezone.now(), value=value)
@@ -195,6 +201,7 @@ class Mutation:
         stream = Stream.objects.filter(pk=input.stream_id, workspace__in=principal.workspaces()).first()
         if stream is None:
             raise _not_found('Stream')
+        require_member_or_above(principal, stream.workspace_id)
         annotation = StreamAnnotation(
             stream=stream, created_by=principal.user, label=input.label, description=input.description,
             annotation_type=input.kind.value, color=input.color, timestamp=input.timestamp,
@@ -210,9 +217,13 @@ class Mutation:
     @strawberry.mutation
     def delete_annotation(self, info: strawberry.Info, id: int) -> bool:
         principal = info.context.require_user()
-        deleted, _ = StreamAnnotation.objects.filter(pk=id, stream__workspace__in=principal.workspaces()).delete()
-        if not deleted:
+        annotation = StreamAnnotation.objects.select_related('stream').filter(
+            pk=id, stream__workspace__in=principal.workspaces(),
+        ).first()
+        if annotation is None:
             raise _not_found('Annotation')
+        require_member_or_above(principal, annotation.stream.workspace_id)
+        annotation.delete()
         return True
 
 

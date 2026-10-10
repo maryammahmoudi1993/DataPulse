@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from strawberry.channels import GraphQLWSConsumer
 from strawberry.django.views import GraphQLView
@@ -17,7 +18,7 @@ class DataPulseGraphQLView(GraphQLView):
         return GQLContext(request)
 
 
-graphql_view = csrf_exempt(DataPulseGraphQLView.as_view(schema=schema, graphql_ide='graphiql'))
+graphql_view = csrf_exempt(DataPulseGraphQLView.as_view(schema=schema, graphql_ide='graphiql' if settings.DEBUG else None))
 
 
 class DataPulseGraphQLWSConsumer(GraphQLWSConsumer):

@@ -174,6 +174,21 @@ GET    /readiness/                     Readiness (DB + Redis)
 GET    /metrics/                       Prometheus metrics
 ```
 
+## GraphQL API
+
+- `POST /graphql/` - queries and mutations
+- `ws://.../graphql/` - subscriptions (`graphql-transport-ws`; send `Authorization` in `connection_init`)
+- `GET /graphql/` - GraphiQL (only when `DEBUG` is on)
+
+Auth: `Authorization: Bearer <jwt>` or `Authorization: Api-Key dp_live_...`. API keys are read-only
+(plus `ingestDataPoint` with the `write:datapoints` scope) and confined to their workspace.
+Mutations require the MEMBER or OWNER role; VIEWERs can only read.
+
+Queries: `workspaces`, `streams`, `stream`, `alerts`
+Mutations: `createStream`, `setStreamStatus`, `ingestDataPoint`, `acknowledgeAlert`, `resolveAlert`,
+`createAnnotation`, `deleteAnnotation`
+Subscription: `streamEvents(streamId)` - live data points and alerts
+
 ## Detector configuration
 
 Each Stream stores `detector_config` as JSON:
